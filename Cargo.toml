@@ -1,0 +1,8 @@
+[package]
+name = "jarmungular_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ash = {version = "0.38.0", features = ["linked"]}
+winit = "0.30.5"
