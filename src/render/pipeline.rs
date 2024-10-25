@@ -120,6 +120,9 @@ struct SurfaceReq {
 struct SwapchainReq {
     swapchain_loader: ash::khr::swapchain::Device, //There's also one instance level function, but I don't think I'll need it. If I do, I can add like a "swapchain_loader_instance" field
     swapchain: vk::SwapchainKHR,
+    swapchain_format: vk::SurfaceFormatKHR,
+    swapchain_extent: vk::Extent2D,
+    swapchain_images: Vec<vk::Image>
 }
 
 //Need to check: surface capabilities, surface formats, and presentation modes
@@ -599,10 +602,16 @@ impl VulkanApp {
         //Create the swapchain
         let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_info, None).expect("Failed to create swapchain") };
 
+        //Get the swapchain images
+        let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(swapchain).unwrap() };
+
         //Return the swapchain_req
         SwapchainReq {
             swapchain_loader,
-            swapchain
+            swapchain,
+            swapchain_format: surface_format,
+            swapchain_extent: extent,
+            swapchain_images
         }
     }
 }
