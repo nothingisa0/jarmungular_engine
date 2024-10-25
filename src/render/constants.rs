@@ -12,7 +12,7 @@ pub const VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 //Required instance and device extensions are here
 pub const INSTANCE_EXTENSIONS: [&CStr; 2] = [
-        vk::KHR_SURFACE_NAME,
-        vk::KHR_WIN32_SURFACE_NAME, //WINDOWS ONLY for now
-    ];
+	vk::KHR_SURFACE_NAME,
+	vk::KHR_WIN32_SURFACE_NAME, //WINDOWS ONLY for now
+];
 pub const DEVICE_EXTENSIONS: [&CStr; 1] = [vk::KHR_SWAPCHAIN_NAME];
