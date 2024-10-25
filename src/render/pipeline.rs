@@ -504,7 +504,7 @@ impl VulkanApp {
 	}
 
 	//Choose the presentation mode for swapchain creation
-	//This is where vsync stuff is decided. No vsync would be "IMMEDIATE"
+	//This is where vsync stuff is decided. Vsync off would be "IMMEDIATE"
 	//Prefer mailbox mode for now. Higher cpu/gpu load, but less latency?? (NEEDS TEST) and no tearing (good middle ground)
 	//Mailbox does "drop frames" as opposed to FIFO which slows stuff down. I kinda like that, but we will see if it needs to be changed
 	fn choose_presentation_mode(available_present_modes: Vec<vk::PresentModeKHR>) -> vk::PresentModeKHR {
@@ -663,7 +663,7 @@ impl VulkanApp {
 
 	//Create the pipeline
 	fn create_pipeline() {
-		
+
 	}
 }
 
