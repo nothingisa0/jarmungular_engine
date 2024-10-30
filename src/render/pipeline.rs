@@ -1,4 +1,6 @@
 use crate::render::constants::*;
+use crate::utility::read::r_shader;
+
 use ash::{vk, khr, Entry};
 use winit::{
 	window::{Window},
@@ -149,6 +151,13 @@ impl SwapchainSupportDetails {
 		}
 	}
 }
+
+
+
+
+
+
+
 
 
 //A bunch of shit is gonna go in here
@@ -663,7 +672,13 @@ impl VulkanApp {
 
 	//Create the pipeline
 	fn create_pipeline() {
+		let fragment_shader = r_shader("./src/render/shaders/fragment.spv");
+		let vertex_shader = r_shader("./src/render/shaders/vertex.spv");
+	}
 
+	//Create shader modules to be used in pipeline
+	fn create_shader_module() {
+		
 	}
 }
 

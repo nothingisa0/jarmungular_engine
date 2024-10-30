@@ -1,5 +1,6 @@
-use crate::render::pipeline;
 use crate::render::constants::*;
+use crate::render::pipeline;
+
 use winit::{
 	application::ApplicationHandler,
 	event::{WindowEvent, ElementState},
@@ -9,9 +10,10 @@ use winit::{
 	platform::modifier_supplement::KeyEventExtModifierSupplement,
 };
 
+//This will mostly work with winit as an app handler
 pub struct VulkanAppHandler {
-	window: Option<Window>, //winit window that gets rendered to
-	vulkan_app: Option<pipeline::VulkanApp> //Stick in the vulkan app as well
+	window: Option<Window>, //Winit window that gets rendered to
+	vulkan_app: Option<pipeline::VulkanApp> //VulkanApp pipeline
 }
 
 impl VulkanAppHandler {
