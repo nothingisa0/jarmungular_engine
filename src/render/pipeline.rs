@@ -245,7 +245,8 @@ impl VulkanApp {
 		let swapchain_req = VulkanApp::create_swapchain(&instance, &device, physical_device, &surface_req);
 		//Create image views for all the swapchain images
 		let swapchain_image_views = VulkanApp::create_image_views(&device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
-
+		//Create a pipeline including the vertex/fragment shaders
+		VulkanApp::create_pipeline(&device);
 
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
@@ -529,7 +530,7 @@ impl VulkanApp {
 
 	//This gives the size of the swapchin in pixels
 	//Clamp it to our min/max from the capabilities
-	//Not optimized compared to rust tutorial. They do a check for an unbounded width/height first, but whatev
+	//Not optimized compared to vulkan-tutorial-rust. They do a check for an unbounded width/height first, but whatev
 	fn choose_swapchain_extent(capabilities: vk::SurfaceCapabilitiesKHR) -> vk::Extent2D {
 		let mut width = WINDOW_WIDTH;
 		let mut height = WINDOW_HEIGHT;
@@ -671,14 +672,68 @@ impl VulkanApp {
 	}
 
 	//Create the pipeline
-	fn create_pipeline() {
-		let fragment_shader = r_shader("./src/render/shaders/fragment.spv");
-		let vertex_shader = r_shader("./src/render/shaders/vertex.spv");
+	fn create_pipeline(device: &ash::Device) {
+		//Read the spirv files for teh vertex/fragment shaders
+		//Shader modules should be destroyed after pipeline creation
+		let fragment_shader_code = r_shader("./src/render/shaders/fragment.spv");
+		let vertex_shader_code = r_shader("./src/render/shaders/vertex.spv");
+
+		//Create the shader modules from those files
+		let fragment_shader_module = VulkanApp::create_shader_module(device, fragment_shader_code);
+		let vertex_shader_module = VulkanApp::create_shader_module(device, vertex_shader_code);
+		
+		//Define the shader entry point - the function of the shader that will run. We want "main" to run (the only one in there at the moment)
+		//Have to define here because rust doesn't like the lifetime of the pointer dying so quickly
+		let shader_entry_point = CString::new("main").unwrap();
+
+		//Pipeline fragment shader stage
+		let pipeline_fragment_stage_info = vk::PipelineShaderStageCreateInfo {
+		    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+		    p_next: ptr::null(),
+		    flags: vk::PipelineShaderStageCreateFlags::empty(), //Subgroup flags - has to do with sharing data. Don't care at the moment
+		    stage: vk::ShaderStageFlags::FRAGMENT, //Fragment shader flag
+		    module: fragment_shader_module, //The shader module yay yay yippee
+		    p_name: shader_entry_point.as_ptr(), //Entry point of the shader
+		    p_specialization_info: ptr::null(), //This is used to specify shader constants before render time. Ex: fragment shader where material 1 has "ploopyness = 50", material 2 has "ploopyness = 100"
+		    ..Default::default()
+		};
+
+		//Pipeline vertex shader stage
+		let pipeline_vertex_stage_info = vk::PipelineShaderStageCreateInfo {
+		    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+		    p_next: ptr::null(),
+		    flags: vk::PipelineShaderStageCreateFlags::empty(),
+		    stage: vk::ShaderStageFlags::VERTEX, //Vertex shader flag
+		    module: vertex_shader_module,
+		    p_name: shader_entry_point.as_ptr(),
+		    p_specialization_info: ptr::null(),
+		    ..Default::default()
+		};
+
+		//Make an array containing the two pipeline shader stage infos
+		let shader_stages = [pipeline_fragment_stage_info, pipeline_vertex_stage_info];
+
+		//Destroy the shader modules now
+		unsafe {
+			device.destroy_shader_module(vertex_shader_module, None);
+			device.destroy_shader_module(fragment_shader_module, None);
+		}
 	}
 
 	//Create shader modules to be used in pipeline
-	fn create_shader_module() {
-		
+	fn create_shader_module(device: &ash::Device, shader_code: Vec<u8>) -> vk::ShaderModule {
+		//Shader module creation info
+		let shader_module_info = vk::ShaderModuleCreateInfo {
+			s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
+    		p_next: ptr::null(),
+    		flags: vk::ShaderModuleCreateFlags::empty(),
+    		code_size: shader_code.len(), //Length in bytes of the shader code
+    		p_code: shader_code.as_ptr() as *const u32, //Shader code (must be in spirv format)
+    		..Default::default()
+		};
+
+		//Now create + return the shader module
+		unsafe { device.create_shader_module(&shader_module_info, None).expect("Couldn't create shader module") }
 	}
 }
 
