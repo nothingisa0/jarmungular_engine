@@ -177,6 +177,7 @@ pub struct VulkanApp {
 	swapchain:vk::SwapchainKHR, //Swapchain - handles screen display + vsync/buffering
 	swapchain_loader: khr::swapchain::Device,
 	swapchain_image_views: Vec<vk::ImageView>, //Image views that describe image access for all the images on the swapchain
+	swapchain_framebuffers: Vec<vk::Framebuffer>, //Framebuffers define the attachments to be written to (image views)
 
 	render_pass: vk::RenderPass, //Describes framebuffer attachments and subpasses for the pipeline
 	pipeline: vk::Pipeline, //A graphics pipeline with all the shaders + fixed functions in there
@@ -253,6 +254,8 @@ impl VulkanApp {
 		let render_pass = VulkanApp::create_render_pass(&device, swapchain_req.swapchain_format.format);
 		//Create a pipeline including the vertex/fragment shaders
 		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&device, render_pass, swapchain_req.swapchain_extent);
+		//Create the framebuffers that contain the image views for the swapchain images as attachments
+		let swapchain_framebuffers = VulkanApp::create_framebuffers(&device, render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
 		VulkanApp {
@@ -271,6 +274,7 @@ impl VulkanApp {
 			swapchain: swapchain_req.swapchain,
 			swapchain_loader: swapchain_req.swapchain_loader,
 			swapchain_image_views,
+			swapchain_framebuffers,
 
 			render_pass,
 			pipeline,
@@ -749,8 +753,8 @@ impl VulkanApp {
 	fn create_pipeline(device: &ash::Device, render_pass: vk::RenderPass, swapchain_extent: vk::Extent2D) -> (vk::Pipeline, vk::PipelineLayout) {
 		//Read the spirv files for the vertex/fragment shaders
 		//Shader modules should be destroyed after pipeline creation
-		let fragment_shader_code = r_shader("./src/render/shaders/fragment.spv");
-		let vertex_shader_code = r_shader("./src/render/shaders/vertex.spv");
+		let fragment_shader_code = r_shader("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/fragment.spv");
+		let vertex_shader_code = r_shader("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/vertex.spv");
 
 		//Create the shader modules from those files
 		let fragment_shader_module = VulkanApp::create_shader_module(device, fragment_shader_code);
@@ -1005,8 +1009,32 @@ impl VulkanApp {
 	}
 
 	//Creates framebuffers to hold attachments needed for the render pass
-	fn create_framebuffer() {
-		
+	//Iterate through image views, create framebuffer for each one
+	fn create_framebuffers(device: &ash::Device, render_pass: vk::RenderPass, image_views: &Vec<vk::ImageView>, swapchain_extent: vk::Extent2D) -> Vec<vk::Framebuffer> {
+		let mut framebuffers = vec![];
+		//Loop through the swapchain image views, get a framebuffer for each one
+		//Need a framebuffer for each image view to write to whenever the swapchain does its whole swap thing
+		for &image_view in image_views {
+			let attachments = [image_view];
+			let framebuffer_info = vk::FramebufferCreateInfo {
+				s_type: vk::StructureType::FRAMEBUFFER_CREATE_INFO,
+				p_next: ptr::null(),
+				flags: vk::FramebufferCreateFlags::empty(),
+				render_pass, //Render pass used for framebuffer compatibility
+				attachment_count: 1, //Just the color attachment for now
+				p_attachments: attachments.as_ptr(),
+				width: swapchain_extent.width, //Framebuffer will have the same extent as the swap chain image view (which has the same extent as the swap chain images)
+				height: swapchain_extent.height,
+				layers: 1,
+				..Default::default()
+			};
+
+			//Create a framebuffer and add it to the vec
+			let framebuffer = unsafe { device.create_framebuffer(&framebuffer_info, None).expect("Failed to create framebuffer") };
+			framebuffers.push(framebuffer);
+		}
+		//Return the framebuffers vec
+		framebuffers
 	}
 }
 
@@ -1014,6 +1042,9 @@ impl VulkanApp {
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
 		unsafe {
+			for framebuffer in &self.swapchain_framebuffers {
+				self.device.destroy_framebuffer(*framebuffer, None);
+			}
 			self.device.destroy_pipeline(self.pipeline, None);
 			self.device.destroy_pipeline_layout(self.pipeline_layout, None);
 			self.device.destroy_render_pass(self.render_pass, None);
