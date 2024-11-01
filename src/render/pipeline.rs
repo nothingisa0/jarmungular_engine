@@ -176,7 +176,9 @@ pub struct VulkanApp {
 
 	swapchain:vk::SwapchainKHR, //Swapchain - handles screen display + vsync/buffering
 	swapchain_loader: khr::swapchain::Device,
-	swapchain_image_views: Vec<vk::ImageView> //Image views that describe image access for all the images on the swapchain
+	swapchain_image_views: Vec<vk::ImageView>, //Image views that describe image access for all the images on the swapchain
+
+	pipeline_layout: vk::PipelineLayout, //Deals with descriptor sets and push constants for pipeline to access
 
 }
 
@@ -246,22 +248,28 @@ impl VulkanApp {
 		//Create image views for all the swapchain images
 		let swapchain_image_views = VulkanApp::create_image_views(&device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
 		//Create a pipeline including the vertex/fragment shaders
-		VulkanApp::create_pipeline(&device);
+		let pipeline_layout = VulkanApp::create_pipeline(&device, swapchain_req.swapchain_extent);
 
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
 		VulkanApp {
 			entry,
 			instance,
+
 			surface: surface_req.surface,
 			surface_loader: surface_req.surface_loader,
+
 			physical_device,
 			device,
+
 			graphics_queue,
 			present_queue,
+
 			swapchain: swapchain_req.swapchain,
 			swapchain_loader: swapchain_req.swapchain_loader,
-			swapchain_image_views
+			swapchain_image_views,
+
+			pipeline_layout,
 		}
 	}
 
@@ -529,7 +537,7 @@ impl VulkanApp {
 	}
 
 	//This gives the size of the swapchin in pixels
-	//Clamp it to our min/max from the capabilities
+	//Clamp it to our min/max from the swapchain's capabilities
 	//Not optimized compared to vulkan-tutorial-rust. They do a check for an unbounded width/height first, but whatev
 	fn choose_swapchain_extent(capabilities: vk::SurfaceCapabilitiesKHR) -> vk::Extent2D {
 		let mut width = WINDOW_WIDTH;
@@ -635,7 +643,7 @@ impl VulkanApp {
 
 	//Create image views for the swapchain images
 	//Input a vec of images from swapchain_req.swapchain_images
-	fn create_image_views(device: &ash::Device, surface_format: vk::SurfaceFormatKHR, images: &Vec<vk::Image>) -> Vec<vk::ImageView> { //DELETE REFERENCE FOR SURFACE FORMAT?? ASK CLIPPY
+	fn create_image_views(device: &ash::Device, surface_format: vk::SurfaceFormatKHR, images: &Vec<vk::Image>) -> Vec<vk::ImageView> {
 		let mut swapchain_image_views = vec![];
 		//Loop over all the images and get image views
 		for &image in images {
@@ -672,7 +680,9 @@ impl VulkanApp {
 	}
 
 	//Create the pipeline
-	fn create_pipeline(device: &ash::Device) {
+	//Most of the pipeline must be baked. Can configure certain things to be dynamic with "PipelineDynamicStateCreateInfo"
+	//Will likely use dynamic viewport/scissor for window resizes, because it's cheap and much easier to set up
+	fn create_pipeline(device: &ash::Device, swapchain_extent: vk::Extent2D) -> vk::PipelineLayout {
 		//Read the spirv files for teh vertex/fragment shaders
 		//Shader modules should be destroyed after pipeline creation
 		let fragment_shader_code = r_shader("./src/render/shaders/fragment.spv");
@@ -687,37 +697,199 @@ impl VulkanApp {
 		let shader_entry_point = CString::new("main").unwrap();
 
 		//Pipeline fragment shader stage
-		let pipeline_fragment_stage_info = vk::PipelineShaderStageCreateInfo {
-		    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-		    p_next: ptr::null(),
-		    flags: vk::PipelineShaderStageCreateFlags::empty(), //Subgroup flags - has to do with sharing data. Don't care at the moment
-		    stage: vk::ShaderStageFlags::FRAGMENT, //Fragment shader flag
-		    module: fragment_shader_module, //The shader module yay yay yippee
-		    p_name: shader_entry_point.as_ptr(), //Entry point of the shader
-		    p_specialization_info: ptr::null(), //This is used to specify shader constants before render time. Ex: fragment shader where material 1 has "ploopyness = 50", material 2 has "ploopyness = 100"
-		    ..Default::default()
+		let fragment_stage_info = vk::PipelineShaderStageCreateInfo {
+			s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineShaderStageCreateFlags::empty(), //Subgroup flags - has to do with sharing data. Don't care at the moment
+			stage: vk::ShaderStageFlags::FRAGMENT, //Fragment shader flag
+			module: fragment_shader_module, //The shader module yay yay yippee
+			p_name: shader_entry_point.as_ptr(), //Entry point of the shader
+			p_specialization_info: ptr::null(), //This is used to specify shader constants before render time. Ex: fragment shader where material 1 has "ploopyness = 50", material 2 has "ploopyness = 100"
+			..Default::default()
 		};
 
 		//Pipeline vertex shader stage
-		let pipeline_vertex_stage_info = vk::PipelineShaderStageCreateInfo {
-		    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-		    p_next: ptr::null(),
-		    flags: vk::PipelineShaderStageCreateFlags::empty(),
-		    stage: vk::ShaderStageFlags::VERTEX, //Vertex shader flag
-		    module: vertex_shader_module,
-		    p_name: shader_entry_point.as_ptr(),
-		    p_specialization_info: ptr::null(),
-		    ..Default::default()
+		let vertex_stage_info = vk::PipelineShaderStageCreateInfo {
+			s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineShaderStageCreateFlags::empty(),
+			stage: vk::ShaderStageFlags::VERTEX, //Vertex shader flag
+			module: vertex_shader_module,
+			p_name: shader_entry_point.as_ptr(),
+			p_specialization_info: ptr::null(),
+			..Default::default()
 		};
 
 		//Make an array containing the two pipeline shader stage infos
-		let shader_stages = [pipeline_fragment_stage_info, pipeline_vertex_stage_info];
+		let shader_stages = [fragment_stage_info, vertex_stage_info];
 
-		//Destroy the shader modules now
+		//Vertex input create info. This has to do with has vertices are passed to the vertex shader
+		//Because vertices are hardcoded into vertex shader at the moment, just leave it empty
+		let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineVertexInputStateCreateFlags::empty(),
+			vertex_attribute_description_count: 0,
+			p_vertex_attribute_descriptions: ptr::null(),
+			vertex_binding_description_count: 0,
+			p_vertex_binding_descriptions: ptr::null(),
+			..Default::default()
+		};
+
+		//Input assembly create info. Describes primitive topology
+		let input_assembly_state_info = vk::PipelineInputAssemblyStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineInputAssemblyStateCreateFlags::empty(),
+			topology: vk::PrimitiveTopology::TRIANGLE_LIST, //Defines every 3 vertices as a triangle primitive, no overlap
+			primitive_restart_enable: vk::FALSE, //Will allow a "restart" vertex index value that can break shit up. Irrelevant for triangle list mode
+			..Default::default()
+		};
+
+		//Viewport and scissor - region of the framebuffer that will be rendered to. We want to make these equal to our swapchain extent
+		//Usually will be dynamic (ex: resizing a window that has an 800x600 image rendered to it will make the image bigger/smaller)
+		//For now, window resizing is disabled, so just have it baked into the pipeline
+		//Setup arrays for viewports + scissors
+		let viewports = [vk::Viewport {
+			x: 0.0, //Top left
+			y: 0.0, //Top left
+			width: swapchain_extent.width as f32, //Width should be the same as the width of the swapchain
+			height: swapchain_extent.height as f32, //Height should be the same as the height of the swapchain
+			min_depth: 0.0, //Just keep standard depths
+			max_depth: 1.0
+		}];
+
+		//Setup the scissors to be used with the viewport 
+		let scissors = [vk::Rect2D {
+			offset: vk::Offset2D {x: 0, y: 0}, //No offset
+			extent: swapchain_extent //Bake in swapchain extent for the scissors
+		}];
+
+		//This is a baked viewport. To make it dynamic, use "VkPipelineDynamicStateCreateInfo" instead
+		let viewport_state_info = vk::PipelineViewportStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineViewportStateCreateFlags::empty(),
+			viewport_count: viewports.len() as u32,
+			p_viewports: viewports.as_ptr(),
+			scissor_count: scissors.len() as u32,
+			p_scissors: scissors.as_ptr(),
+			..Default::default()
+		};
+
+		//Rasterization stage configuration
+		let rasterization_state_info = vk::PipelineRasterizationStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineRasterizationStateCreateFlags::empty(),
+			depth_clamp_enable: vk::FALSE, //Clamps to z_near and z_far planes instead of discarding values past them if true (requires an extension)
+			rasterizer_discard_enable: vk::FALSE, //Discards triangles before rasterizing. Disables output to framebuffer basically
+			polygon_mode: vk::PolygonMode::FILL, //Can do wireframe or whatever
+			line_width: 1.0, //Any line thicker than 1.0 will require GPU feature
+			cull_mode: vk::CullModeFlags::BACK, //Cull the back facing triangles only
+			front_face: vk::FrontFace::CLOCKWISE, //Defines triangle winding convention used for face culling
+			depth_bias_enable: vk::FALSE, //Bias on all the depth values. I guess it can be used for shadow maps or something
+			depth_bias_constant_factor: 0.0,
+			depth_bias_clamp: 0.0,
+			depth_bias_slope_factor: 0.0,
+			..Default::default()
+		};
+
+		//MSAA disabled for now - requires a gpu feature
+		//Good for forward rendering, not so much for deferred
+		let ms_state_info = vk::PipelineMultisampleStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineMultisampleStateCreateFlags::empty(),
+			rasterization_samples: vk::SampleCountFlags::TYPE_1,
+			sample_shading_enable: vk::FALSE,
+			min_sample_shading: 0.0,
+			p_sample_mask: ptr::null(),
+			alpha_to_one_enable: vk::FALSE,
+			alpha_to_coverage_enable: vk::FALSE,
+			..Default::default()
+		};
+
+		//Configures depth/stencil tests if using depth/stencil buffer
+		//Not using for now
+		//First have to comfigure stencil state - right now, not using the stencil buffer - will always keep everything
+		//Can setup dynamic enabling/disabling of the stencil test if need be
+		let stencil_state = vk::StencilOpState {
+			fail_op: vk::StencilOp::KEEP, //What to do to samples that fail stencil test
+			pass_op: vk::StencilOp::KEEP, //What to do with samples that pass the stencil and depth tests
+			depth_fail_op: vk::StencilOp::KEEP, //What to do with samples that pass the stencil test but fail depth test
+			compare_op: vk::CompareOp::ALWAYS, //Comparison operator to use for stencil test
+			compare_mask: 0, //Can set which bits of the stencil value to check
+			write_mask: 0, //Can set bits of stencil values in the stencil framebuffer attachment that get updated by the stencil test
+			reference: 0, //Value to test the stencil value against
+		};
+
+		let depth_stencil_state_info = vk::PipelineDepthStencilStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineDepthStencilStateCreateFlags::empty(),
+			depth_test_enable: vk::FALSE, //Enables depth testing - compares new fragments to depth buffer
+			depth_write_enable: vk::FALSE, //Enables whether depth attachment is written to if the comparison comes back as "true" during depth test (sets to sample's depth if so)
+			depth_compare_op: vk::CompareOp::LESS_OR_EQUAL, //What operator to use for depth comparison (lower depth is closer by convention)
+			depth_bounds_test_enable: vk::FALSE, //This and the two bounds let you discard things in a certain depth range. Don't really need it
+			min_depth_bounds: 0.0,
+			max_depth_bounds: 1.0,
+			stencil_test_enable: vk::FALSE, //Enable stencil test. Will have to make sure the depth/stencil image has a stencil component if using this
+			front: stencil_state, //For front facing triangles
+			back: stencil_state, //For back facing triangles
+			..Default::default()
+		};
+
+		//Color blending - controls how fragment shader's returned color mixes with the color already in the framebuffer
+		//Need the attachment states first
+		//Disable blending for now - framebuffer will just take new color
+		let color_blend_attachments = [vk::PipelineColorBlendAttachmentState {
+			blend_enable: vk::FALSE,
+			src_color_blend_factor: vk::BlendFactor::ONE, //What the source color (new color from fragment buffer) is multiplied by for blending
+			dst_color_blend_factor: vk::BlendFactor::ONE, //What the destination color (old color in framebuffer) is multiplied by before blending
+			color_blend_op: vk::BlendOp::ADD, //The operation used to blend the two colors
+			src_alpha_blend_factor: vk::BlendFactor::ONE, //Same thing is done again for alpha
+			dst_alpha_blend_factor: vk::BlendFactor::ONE,
+			alpha_blend_op: vk::BlendOp::ADD,
+			color_write_mask: vk::ColorComponentFlags::RGBA //Enables/disables any of the rgba components for writing
+		}];
+
+		let color_blend_state_info = vk::PipelineColorBlendStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineColorBlendStateCreateFlags::empty(),
+			logic_op_enable: vk::FALSE, //If enabled, this will ignore the "color_blend_attachment" and just apply the bitwise operation in "logic_op" for blending instead
+			logic_op: vk::LogicOp::COPY,
+			attachment_count: color_blend_attachments.len() as u32,
+			p_attachments: color_blend_attachments.as_ptr(),
+			blend_constants: [0.0, 0.0, 0.0, 0.0], //Will be used if "BlendFactor" needs constants for an operation
+			..Default::default()
+		};
+
+		//Pipeline layout - describes resources that can be accessed by a pipeline (descriptor sets)
+		let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
+			s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineLayoutCreateFlags::empty(),
+			set_layout_count: 0, //Number of descriptor sets in pipeline layout
+			p_set_layouts: ptr::null(), //Pointer to descriptor set layouts
+			push_constant_range_count: 0, //Number of push constants in pipeline layout
+			p_push_constant_ranges: ptr::null(), //Pointer to push constants layouts
+			..Default::default()
+		};
+
+		//Create the pipeline layout
+		let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_info, None).expect("Failed to create pipeline layout") };
+
+		//Destroy the shader modules now, since they won't be needed after the pipeline gets created
 		unsafe {
 			device.destroy_shader_module(vertex_shader_module, None);
 			device.destroy_shader_module(fragment_shader_module, None);
 		}
+
+		//Return the pipeline layout
+		pipeline_layout
+
 	}
 
 	//Create shader modules to be used in pipeline
@@ -725,11 +897,11 @@ impl VulkanApp {
 		//Shader module creation info
 		let shader_module_info = vk::ShaderModuleCreateInfo {
 			s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
-    		p_next: ptr::null(),
-    		flags: vk::ShaderModuleCreateFlags::empty(),
-    		code_size: shader_code.len(), //Length in bytes of the shader code
-    		p_code: shader_code.as_ptr() as *const u32, //Shader code (must be in spirv format)
-    		..Default::default()
+			p_next: ptr::null(),
+			flags: vk::ShaderModuleCreateFlags::empty(),
+			code_size: shader_code.len(), //Length in bytes of the shader code
+			p_code: shader_code.as_ptr() as *const u32, //Shader code (must be in spirv format)
+			..Default::default()
 		};
 
 		//Now create + return the shader module
@@ -741,6 +913,7 @@ impl VulkanApp {
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
 		unsafe {
+			self.device.destroy_pipeline_layout(self.pipeline_layout, None);
 			for swapchain_image_view in &self.swapchain_image_views {
 				self.device.destroy_image_view(*swapchain_image_view, None);
 			}

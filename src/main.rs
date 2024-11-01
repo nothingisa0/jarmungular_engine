@@ -1,4 +1,8 @@
 //TO DO: fix physical device suitability score so it (hopefully) works on luke's computer and doesn't do the hookapp thing.
+//TO DO: A variety of resolutions. Probably will need to make the pipeline viewports/scissors dynamic.
+
+
+//CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation).
 
 
 //#![allow(unused_imports)]
