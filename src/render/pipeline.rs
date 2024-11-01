@@ -178,6 +178,8 @@ pub struct VulkanApp {
 	swapchain_loader: khr::swapchain::Device,
 	swapchain_image_views: Vec<vk::ImageView>, //Image views that describe image access for all the images on the swapchain
 
+	render_pass: vk::RenderPass, //Describes framebuffer attachments and subpasses for the pipeline
+	pipeline: vk::Pipeline, //A graphics pipeline with all the shaders + fixed functions in there
 	pipeline_layout: vk::PipelineLayout, //Deals with descriptor sets and push constants for pipeline to access
 
 }
@@ -247,9 +249,10 @@ impl VulkanApp {
 		let swapchain_req = VulkanApp::create_swapchain(&instance, &device, physical_device, &surface_req);
 		//Create image views for all the swapchain images
 		let swapchain_image_views = VulkanApp::create_image_views(&device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
+		//Create the render pass
+		let render_pass = VulkanApp::create_render_pass(&device, swapchain_req.swapchain_format.format);
 		//Create a pipeline including the vertex/fragment shaders
-		let pipeline_layout = VulkanApp::create_pipeline(&device, swapchain_req.swapchain_extent);
-
+		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&device, render_pass, swapchain_req.swapchain_extent);
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
 		VulkanApp {
@@ -269,6 +272,8 @@ impl VulkanApp {
 			swapchain_loader: swapchain_req.swapchain_loader,
 			swapchain_image_views,
 
+			render_pass,
+			pipeline,
 			pipeline_layout,
 		}
 	}
@@ -679,11 +684,70 @@ impl VulkanApp {
 		swapchain_image_views
 	}
 
+	//Create a render pass for the pipeline
+	//Decribes framebuffer attachments to be used when rendering
+	//Dynamic rendering ("VK_KHR_dynamic_rendering") would make it so this isn't really necessary (makes each render pass just one subpass). Subpasses are really only important for phone GPUs (tiled GPUs)
+	fn create_render_pass(device: &ash::Device, surface_format: vk::Format) -> vk::RenderPass {
+		//First create attachment description
+		//There's also an AttachmentDescription2, but it only really adds s_type and p_next
+		let color_attachment = vk::AttachmentDescription {
+			flags: vk::AttachmentDescriptionFlags::empty(),
+			format: surface_format, //Will take this from swapchain so they're compatible
+			samples: vk::SampleCountFlags::TYPE_1, //Samples per pixel if msaa is being used
+			load_op: vk::AttachmentLoadOp::CLEAR, //What to do with the attachment at the beginning of the first subpass (color/depth components)
+			store_op: vk::AttachmentStoreOp::STORE, //What to do with the attachment at the end of the last subpass (color/depth components)
+			stencil_load_op: vk::AttachmentLoadOp::DONT_CARE, //and load behavior for the stencil component
+			stencil_store_op: vk::AttachmentStoreOp::DONT_CARE, //and store behavior for the stencil component
+			initial_layout: vk::ImageLayout::UNDEFINED, //Input image layout - "UNDEFINED" usually means the image was just created
+			final_layout: vk::ImageLayout::PRESENT_SRC_KHR //Output image layout - we want it to go straight to the swapchain
+		};
+
+		//Subpasses will reference the attachments, need to set up the attachment references
+		let color_attachment_ref = vk::AttachmentReference {
+			attachment: 0, //Index of attachment to use in RenderPassCreateInfo
+			layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, //Image layout to use during the subpass
+		};
+
+		//Subpass description
+		//There's also a "SubpassDescription2," which adds a view mask for multiview - don't really need it
+		let subpass = vk::SubpassDescription {
+			flags: vk::SubpassDescriptionFlags::empty(),
+			pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS, //Pipeline type supported for the subpass, graphics/compute
+			input_attachment_count: 0, //Attachments read from shader
+			p_input_attachments: ptr::null(),
+			color_attachment_count: 1,
+			p_color_attachments: &color_attachment_ref,
+			p_resolve_attachments: ptr::null(), //Attachments used for multisampling
+			p_depth_stencil_attachment: ptr::null(), //Attachment for depth/stencil data
+			preserve_attachment_count: 0, //Attachments that aren't used by this subpass, but need to be preserved
+			p_preserve_attachments: ptr::null(),
+			..Default::default()
+		};
+
+		//Render pass creation info
+		//There's also a "RenderPassCreationInfo2" that adds a mask suggesting views that should be rendered concurrently, not necessary
+		let render_pass_info = vk::RenderPassCreateInfo {
+			s_type: vk::StructureType::RENDER_PASS_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::RenderPassCreateFlags::empty(),
+			attachment_count: 1,
+			p_attachments: &color_attachment,
+			subpass_count: 1,
+			p_subpasses: &subpass,
+			dependency_count: 0, //Memory dependencies between subpasses
+			p_dependencies: ptr::null(),
+			..Default::default()
+		};
+
+		//Create and return the render pass
+		unsafe { device.create_render_pass(&render_pass_info, None).expect("Failed to create render pass") }
+	}
+
 	//Create the pipeline
 	//Most of the pipeline must be baked. Can configure certain things to be dynamic with "PipelineDynamicStateCreateInfo"
 	//Will likely use dynamic viewport/scissor for window resizes, because it's cheap and much easier to set up
-	fn create_pipeline(device: &ash::Device, swapchain_extent: vk::Extent2D) -> vk::PipelineLayout {
-		//Read the spirv files for teh vertex/fragment shaders
+	fn create_pipeline(device: &ash::Device, render_pass: vk::RenderPass, swapchain_extent: vk::Extent2D) -> (vk::Pipeline, vk::PipelineLayout) {
+		//Read the spirv files for the vertex/fragment shaders
 		//Shader modules should be destroyed after pipeline creation
 		let fragment_shader_code = r_shader("./src/render/shaders/fragment.spv");
 		let vertex_shader_code = r_shader("./src/render/shaders/vertex.spv");
@@ -796,17 +860,17 @@ impl VulkanApp {
 		};
 
 		//MSAA disabled for now - requires a gpu feature
-		//Good for forward rendering, not so much for deferred
+		//Good for forward rendering, not so much for deferred (needs to know vertex edges. If lighting is deferred, it won't know anything about vertices)
 		let ms_state_info = vk::PipelineMultisampleStateCreateInfo {
 			s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineMultisampleStateCreateFlags::empty(),
-			rasterization_samples: vk::SampleCountFlags::TYPE_1,
-			sample_shading_enable: vk::FALSE,
-			min_sample_shading: 0.0,
+			rasterization_samples: vk::SampleCountFlags::TYPE_1, //Number of samples per pixel
+			sample_shading_enable: vk::FALSE, //Sample shading - this can force a certain number of samples for EVERY pixel, rather than just edges (enables fsaa/ssaa)
+			min_sample_shading: 0.0, //If sample shading is enabled, can force a fraction of the "rasterization_samples" number to be taken, or just go 1.0 for all of them
 			p_sample_mask: ptr::null(),
-			alpha_to_one_enable: vk::FALSE,
-			alpha_to_coverage_enable: vk::FALSE,
+			alpha_to_one_enable: vk::FALSE, //If enabled: will replace fragment's alpha with msaa coverage
+			alpha_to_coverage_enable: vk::FALSE, //If enabled: will generate a temp alpha for msaa coverage and combine it with the fragment's aplpha
 			..Default::default()
 		};
 
@@ -881,15 +945,47 @@ impl VulkanApp {
 		//Create the pipeline layout
 		let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_info, None).expect("Failed to create pipeline layout") };
 
+		//Pipeline creation info
+		//Can use pipeline with subpasses other than the one defined here, but it must be a compatible render pass (same formats/sample count for all relevant attachments - it's all in spec if need be)
+		let pipeline_info = vk::GraphicsPipelineCreateInfo {
+			s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineCreateFlags::empty(),
+			stage_count: shader_stages.len() as u32,
+			p_stages: shader_stages.as_ptr(),
+			p_vertex_input_state: &vertex_input_state_info,
+			p_input_assembly_state: &input_assembly_state_info,
+			p_tessellation_state: ptr::null(),
+			p_viewport_state: &viewport_state_info,
+			p_rasterization_state: &rasterization_state_info,
+			p_multisample_state: &ms_state_info,
+			p_depth_stencil_state: &depth_stencil_state_info,
+			p_color_blend_state: &color_blend_state_info,
+			p_dynamic_state: ptr::null(),
+			layout: pipeline_layout, //Defined above
+			render_pass, //Passed into "create_pipeline"
+			subpass: 0, //Subpass index in render pass that this pipeline will be used
+			base_pipeline_handle: vk::Pipeline::null(), //If creating a derivative pipeline of another pipeline, use these. Also will have to set the appropriate flag above to enable these
+			base_pipeline_index: -1, //-1 if no parent pipeline
+			..Default::default()
+		};
+
+		//Pipeline creation function can create multiple pipelines at once. Setup the array here
+		let pipeline_infos = [pipeline_info];
+
+		//Create the pipeline
+		//Pipeline cache allows for reuse of pipeline creation details, can speed creation of pipelines later. "Leave as vk::PipelineCache::null()" to not use it
+		let pipelines = unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, None).expect("Failed to create graphics pipeline(s)") };
+
 		//Destroy the shader modules now, since they won't be needed after the pipeline gets created
 		unsafe {
 			device.destroy_shader_module(vertex_shader_module, None);
 			device.destroy_shader_module(fragment_shader_module, None);
 		}
 
-		//Return the pipeline layout
-		pipeline_layout
-
+		//Return the pipeline and pipeline layout
+		//Just return the one pipeline being created
+		(pipelines[0], pipeline_layout)
 	}
 
 	//Create shader modules to be used in pipeline
@@ -907,13 +1003,20 @@ impl VulkanApp {
 		//Now create + return the shader module
 		unsafe { device.create_shader_module(&shader_module_info, None).expect("Couldn't create shader module") }
 	}
+
+	//Creates framebuffers to hold attachments needed for the render pass
+	fn create_framebuffer() {
+		
+	}
 }
 
 //Have to destroy anything that was explicitly created
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
 		unsafe {
+			self.device.destroy_pipeline(self.pipeline, None);
 			self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+			self.device.destroy_render_pass(self.render_pass, None);
 			for swapchain_image_view in &self.swapchain_image_views {
 				self.device.destroy_image_view(*swapchain_image_view, None);
 			}
