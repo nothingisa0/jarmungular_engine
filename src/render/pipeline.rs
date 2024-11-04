@@ -183,6 +183,9 @@ pub struct VulkanApp {
 	pipeline: vk::Pipeline, //A graphics pipeline with all the shaders + fixed functions in there
 	pipeline_layout: vk::PipelineLayout, //Deals with descriptor sets and push constants for pipeline to access
 
+	command_pool: vk::CommandPool, //Deals with memory stuff for the command buffers
+	command_buffers: Vec<vk::CommandBuffer>, //Records commands which are then submitted to a queue
+
 }
 
 //OpenGLcels seething over Vulkanchads
@@ -244,10 +247,12 @@ impl VulkanApp {
 		let surface_req = VulkanApp::create_surface(&entry, &instance, window);
 		//Create the physical device
 		let physical_device = VulkanApp::select_physical_device(&instance, &surface_req);
+		//Find the queue family indices from the physicl device. These will be used for the logical device creation (and a couple other things after that)
+		let queue_family_indices = QueueFamilyIndices::find_queue_families(&instance, physical_device, &surface_req);
 		//Create logical device and graphics/present queue
-		let (device, graphics_queue, present_queue) = VulkanApp::create_logical_device(&instance, physical_device, &surface_req, enable_layer_names);
+		let (device, graphics_queue, present_queue) = VulkanApp::create_logical_device(&instance, physical_device, &queue_family_indices, &surface_req, enable_layer_names);
 		//Create swapchain (and all the fun stuff that comes with it)
-		let swapchain_req = VulkanApp::create_swapchain(&instance, &device, physical_device, &surface_req);
+		let swapchain_req = VulkanApp::create_swapchain(&instance, &device, physical_device, &surface_req, &queue_family_indices);
 		//Create image views for all the swapchain images
 		let swapchain_image_views = VulkanApp::create_image_views(&device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
 		//Create the render pass
@@ -256,6 +261,10 @@ impl VulkanApp {
 		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&device, render_pass, swapchain_req.swapchain_extent);
 		//Create the framebuffers that contain the image views for the swapchain images as attachments
 		let swapchain_framebuffers = VulkanApp::create_framebuffers(&device, render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
+		//Create the command pool for the graphics family
+		let command_pool = VulkanApp::create_command_pool(&device, &queue_family_indices);
+		//Create the command buffers with all the recorded commands
+		let command_buffers = VulkanApp::create_command_buffers(&device, command_pool, render_pass, pipeline, &swapchain_framebuffers, swapchain_req.swapchain_extent);
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
 		VulkanApp {
@@ -279,6 +288,9 @@ impl VulkanApp {
 			render_pass,
 			pipeline,
 			pipeline_layout,
+
+			command_pool,
+			command_buffers,
 		}
 	}
 
@@ -396,10 +408,8 @@ impl VulkanApp {
 	}
 
 	//Find a graphics queue family, create the logical device, create queue
-	fn create_logical_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice, surface_req: &SurfaceReq, validation: Vec<*const i8>) -> (ash::Device, vk::Queue, vk::Queue) {
-		//Get the queue family indices
-		let queue_family_indices = QueueFamilyIndices::find_queue_families(instance, physical_device, surface_req);
-
+	fn create_logical_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice, queue_family_indices: &QueueFamilyIndices, surface_req: &SurfaceReq, validation: Vec<*const i8>) -> (ash::Device, vk::Queue, vk::Queue) {
+		//Passing the queue family indices into this function, since they're used for a few other things as well
 		//Get UNIQUE queue family indices
 		//This would be more efficient with a hashset, but this should only deal with a few familiy indices so doesn't really matter
 		let mut unique_queue_family_indices = vec![queue_family_indices.graphics_family, queue_family_indices.present_family];
@@ -574,7 +584,7 @@ impl VulkanApp {
 	}
 
 	//Use all the "chooser" functions then make the swapchain
-	fn create_swapchain(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice, surface_req: &SurfaceReq) -> SwapchainReq {
+	fn create_swapchain(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice, surface_req: &SurfaceReq, queue_family_indices: &QueueFamilyIndices) -> SwapchainReq {
 		//Get all the fun info that's required for swapchain creation
 		let swapchain_support_details = SwapchainSupportDetails::query_swapchain_support_details(physical_device, surface_req);
 		let surface_format = VulkanApp::choose_swapchain_format(swapchain_support_details.formats);
@@ -601,8 +611,7 @@ impl VulkanApp {
 
 		//Need to handle the case of graphics queue family being different than presentation queue family
 		//In that case, the swapchain will need to be shared between the two families
-		//As an optimization, could reuse these from the logical device creation, pass them in here. Would need to create the device's queues in "init_vulkan"
-		let queue_family_indices = QueueFamilyIndices::find_queue_families(instance, physical_device, surface_req);
+		//Queue family indices are passed into this function
 		let (image_sharing_mode, queue_family_index_count, queue_family_indices) = if queue_family_indices.graphics_family == queue_family_indices.present_family {
 			(vk::SharingMode::EXCLUSIVE, 0, vec![])
 		} else {
@@ -1036,12 +1045,102 @@ impl VulkanApp {
 		//Return the framebuffers vec
 		framebuffers
 	}
+
+	//Creates a command pool - used to manage memory for command buffers
+	fn create_command_pool(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> vk::CommandPool {
+		let command_pool_info = vk::CommandPoolCreateInfo {
+			s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER, //Want to be able to reset the command pool individually (will happen every frame)
+			queue_family_index: queue_family_indices.graphics_family.unwrap(), //Want to submit commands for drawing to a command buffer on the graphics queue
+			..Default::default()
+		};
+
+		//Create the command pool
+		unsafe { device.create_command_pool(&command_pool_info, None).expect("Failed to create command pool") }
+	}
+
+	//Allocates and creates command buffers for commands to be submitted to
+	fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPool, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffers: &Vec<vk::Framebuffer>, swapchain_extent: vk::Extent2D) -> Vec<vk::CommandBuffer> {
+		let command_buffer_info = vk::CommandBufferAllocateInfo {
+			s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+			p_next: ptr::null(),
+			command_pool, //Command pool from which command buffer is allocated
+			level: vk::CommandBufferLevel::PRIMARY, //Primary or secondary. Primary command buffers can execute secondary command buffers, kinda like executing a function
+			command_buffer_count: framebuffers.len() as u32, //Number of command buffers to allocate
+			..Default::default()
+		};
+
+		//Allocate the command buffer
+		let command_buffers = unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") };
+			
+		//Now record to the command buffers - put in everything we want to do
+		//Need to record to a separate command buffer for each swapchain framebuffer
+		for (i, &command_buffer) in command_buffers.iter().enumerate() {
+			//Start with the command buffer begin info
+			let command_buffer_begin_info = vk::CommandBufferBeginInfo {
+				s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+				p_next: ptr::null(),
+				flags: vk::CommandBufferUsageFlags::empty(), //Flags for rerecording, resubmitting, and if it's a secondary command buffer. None needed here
+				p_inheritance_info: ptr::null(), //Inheritance info for secondary command buffers
+				..Default::default()
+			};
+
+			//Begin recording to the command buffer
+			//Remember - the commands submitted to the buffer will NOT necessarily go in order
+			unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info).expect("Failed to begin recording to command buffer") };
+
+			//Set the values to clear to, this will be passed to "render_pass_begin_info"
+			//An array containing clear values for each framebufffer attachment that has a loap_op (as defined in the render pass) with clearing
+			//This is a rust union, so it's defined using one field
+			let clear_values = [vk::ClearValue {
+				color: vk::ClearColorValue {float32: [0.0, 0.0, 0.0, 1.0]}, //Black at 100% opacity
+			}];
+
+			//Render pass begin info
+			let render_pass_begin_info = vk::RenderPassBeginInfo {
+				s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+				p_next: ptr::null(),
+				render_pass, //The render pass to begin an instance of
+				framebuffer: framebuffers[i], //The framebuffer containing the attachments to use in the render pass
+				render_area: vk::Rect2D { //Render area being affected by the render pass instance
+					offset: vk::Offset2D {x: 0, y: 0},
+					extent: swapchain_extent
+				},
+				clear_value_count: clear_values.len() as u32,
+				p_clear_values: clear_values.as_ptr(),
+				..Default::default()
+			};
+
+			//Command to begin the render pass
+			//There's a begin_render_pass2, but it only adds a s_type and p_next to the SubpassContents
+			unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) }; //Inline: subpass commands will be in primary command buffer, no secondary command buffers
+
+			//Bind the pipeline to the render pass
+			//Pipeline bind point
+			//Dynamic states would be set here, if they were set up in "create_pipeline" fn
+			unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline) }; //Specified as graphics pipeline, same as specification in render pass subpass
+
+			//Draw command
+			unsafe { device.cmd_draw(command_buffer, 3, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
+
+			//Command to end the render pass
+			unsafe { device.cmd_end_render_pass(command_buffer)};
+
+			//Command to end command buffer recording
+			unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
+		}
+
+		//Return the command buffers
+		command_buffers
+	}
 }
 
 //Have to destroy anything that was explicitly created
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
 		unsafe {
+			self.device.destroy_command_pool(self.command_pool, None);
 			for framebuffer in &self.swapchain_framebuffers {
 				self.device.destroy_framebuffer(*framebuffer, None);
 			}
