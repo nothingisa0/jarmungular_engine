@@ -6,6 +6,9 @@ pub const WINDOW_TITLE: &str = "peepee poopoo";
 pub const WINDOW_WIDTH: u32 = 800;
 pub const WINDOW_HEIGHT: u32 = 600;
 
+//Desired presentation mode option. Check for this in "VulkanApp::choose_presentation_mode" fn
+pub const DESIRED_PRESENTATION_MODE: vk::PresentModeKHR = vk::PresentModeKHR::MAILBOX;
+
 //Can enable/disable validation layers for debug/release
 pub const VALIDATION_ENABLED: bool = true;
 pub const VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];

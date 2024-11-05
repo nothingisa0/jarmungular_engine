@@ -186,6 +186,13 @@ pub struct VulkanApp {
 	command_pool: vk::CommandPool, //Deals with memory stuff for the command buffers
 	command_buffers: Vec<vk::CommandBuffer>, //Records commands which are then submitted to a queue
 
+	//Synchronization objects
+	//Semaphore - used for GPU-GPU synchronization
+	//Fence - used for CPU-GPU synchronization
+	image_available_semaphores: vk::Semaphore, //Signals that an image has been acquired from the swapchain and is ready for rendering
+	render_finished_semaphores: vk::Semaphore, //Signals that rendering is finished, presentation can happen
+	in_flight_fences: vk::Fence, //Signals that a frame is in flight
+
 }
 
 //OpenGLcels seething over Vulkanchads
@@ -265,6 +272,8 @@ impl VulkanApp {
 		let command_pool = VulkanApp::create_command_pool(&device, &queue_family_indices);
 		//Create the command buffers with all the recorded commands
 		let command_buffers = VulkanApp::create_command_buffers(&device, command_pool, render_pass, pipeline, &swapchain_framebuffers, swapchain_req.swapchain_extent);
+		//Create all the stuff needed to synchronize the draw
+		let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = VulkanApp::create_sync_objects(&device);
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
 		VulkanApp {
@@ -291,6 +300,10 @@ impl VulkanApp {
 
 			command_pool,
 			command_buffers,
+
+			image_available_semaphores,
+			render_finished_semaphores,
+			in_flight_fences,
 		}
 	}
 
@@ -544,15 +557,30 @@ impl VulkanApp {
 	//This is where vsync stuff is decided. Vsync off would be "IMMEDIATE"
 	//Prefer mailbox mode for now. Higher cpu/gpu load, but less latency?? (NEEDS TEST) and no tearing (good middle ground)
 	//Mailbox does "drop frames" as opposed to FIFO which slows stuff down. I kinda like that, but we will see if it needs to be changed
+	//Need to consider frames in flight with all these options as well
 	fn choose_presentation_mode(available_present_modes: Vec<vk::PresentModeKHR>) -> vk::PresentModeKHR {
-		let fallback = vk::PresentModeKHR::FIFO;
+		let mut present_mode_flag = 0b0000_0000;
+		//Check for desired present modes, set a flag
 		for available_present in available_present_modes {
 			if available_present == vk::PresentModeKHR::MAILBOX {
-				return available_present
+				present_mode_flag |= 0b0000_0010;
+			} else if available_present == vk::PresentModeKHR::IMMEDIATE {
+				present_mode_flag |= 0b0000_0001;
+			} else if available_present == DESIRED_PRESENTATION_MODE {
+				present_mode_flag |= 0b0000_0100;
 			}
 		}
-		//Go for FIFO if mailbox isn't available. FIFO is guaranteed to be supported, as long as presentation is supported (which is assumed at this point)
-		fallback
+		//Check the flag, go in priority order desired -> mailbox -> immediate -> fifo
+		if present_mode_flag > 0b0000_0010 {
+			DESIRED_PRESENTATION_MODE
+		}
+		else if present_mode_flag > 0b0000_0001 {
+			vk::PresentModeKHR::MAILBOX
+		} else if present_mode_flag > 0b0000_0000 {
+			vk::PresentModeKHR::IMMEDIATE
+		} else {
+			vk::PresentModeKHR::FIFO
+		}
 	}
 
 	//This gives the size of the swapchin in pixels
@@ -590,6 +618,11 @@ impl VulkanApp {
 		let surface_format = VulkanApp::choose_swapchain_format(swapchain_support_details.formats);
 		let present_mode = VulkanApp::choose_presentation_mode(swapchain_support_details.present_modes);
 		let extent = VulkanApp::choose_swapchain_extent(swapchain_support_details.capabilities);
+
+		println!("\nSWAPCHAIN INFORMATION:");
+		println!("Chosen surface_format: {:?}", surface_format);
+		println!("Chosen present mode: {:?}", present_mode);
+		println!("Chosen extent: {:?}", extent);
 
 		//Swapchain image count. Seems like the driver may hijack some in some cases, making more than the requested minimum.
 		//This is relevant for double/triple buffering if in FIFO.
@@ -737,6 +770,19 @@ impl VulkanApp {
 			..Default::default()
 		};
 
+		//Make a subpass dependency for synchronization stuff
+		//The first implicit subpass that deals with image layout transitions usually executes at the top of the pipeline, when the image from the swapchain may not yet be available
+		//Need to make sure render passes don't begin until the image is available
+		let subpass_dependencies = [vk::SubpassDependency {
+			src_subpass: vk::SUBPASS_EXTERNAL, //"SUBPASS_EXTERNAL" refers to the implicit subpass that happens when automatically transitioning image layouts
+			dst_subpass: 0, //Subpass index
+			src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //First implicit subpass must wait until the color attachment output pipeline stage. This will align it with the image available semaphore
+			src_access_mask: vk::AccessFlags::empty(), //This has to do with memory synchronization
+			dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Operations that should wait (writing of the color attachment)
+			dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+			dependency_flags: vk::DependencyFlags::empty(),
+		}];
+
 		//Render pass creation info
 		//There's also a "RenderPassCreationInfo2" that adds a mask suggesting views that should be rendered concurrently, not necessary
 		let render_pass_info = vk::RenderPassCreateInfo {
@@ -747,8 +793,8 @@ impl VulkanApp {
 			p_attachments: &color_attachment,
 			subpass_count: 1,
 			p_subpasses: &subpass,
-			dependency_count: 0, //Memory dependencies between subpasses
-			p_dependencies: ptr::null(),
+			dependency_count: subpass_dependencies.len() as u32, //Memory dependencies between subpasses
+			p_dependencies: subpass_dependencies.as_ptr(),
 			..Default::default()
 		};
 
@@ -864,7 +910,7 @@ impl VulkanApp {
 			polygon_mode: vk::PolygonMode::FILL, //Can do wireframe or whatever
 			line_width: 1.0, //Any line thicker than 1.0 will require GPU feature
 			cull_mode: vk::CullModeFlags::BACK, //Cull the back facing triangles only
-			front_face: vk::FrontFace::CLOCKWISE, //Defines triangle winding convention used for face culling
+			front_face: vk::FrontFace::COUNTER_CLOCKWISE, //Defines triangle winding convention used for face culling
 			depth_bias_enable: vk::FALSE, //Bias on all the depth values. I guess it can be used for shadow maps or something
 			depth_bias_constant_factor: 0.0,
 			depth_bias_clamp: 0.0,
@@ -1067,7 +1113,7 @@ impl VulkanApp {
 			p_next: ptr::null(),
 			command_pool, //Command pool from which command buffer is allocated
 			level: vk::CommandBufferLevel::PRIMARY, //Primary or secondary. Primary command buffers can execute secondary command buffers, kinda like executing a function
-			command_buffer_count: framebuffers.len() as u32, //Number of command buffers to allocate
+			command_buffer_count: 1, //Number of command buffers to allocate. If doing multiple frames in flight, must have one for each framebuffer (one for each swapchain image)
 			..Default::default()
 		};
 
@@ -1075,7 +1121,7 @@ impl VulkanApp {
 		let command_buffers = unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") };
 			
 		//Now record to the command buffers - put in everything we want to do
-		//Need to record to a separate command buffer for each swapchain framebuffer
+		//Recording to a separate command buffer for each swapchain framebuffer. This will be able to handle multiple frames in flight
 		for (i, &command_buffer) in command_buffers.iter().enumerate() {
 			//Start with the command buffer begin info
 			let command_buffer_begin_info = vk::CommandBufferBeginInfo {
@@ -1134,23 +1180,123 @@ impl VulkanApp {
 		//Return the command buffers
 		command_buffers
 	}
+
+	//Create synchronization objects to deal with frames in flight + swapchain sync stuff
+	fn create_sync_objects(device: &ash::Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
+		let semaphore_info = vk::SemaphoreCreateInfo {
+			s_type: vk::StructureType::SEMAPHORE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::SemaphoreCreateFlags::empty(),
+			..Default::default()
+		};
+
+		let fence_info = vk::FenceCreateInfo {
+			s_type: vk::StructureType::FENCE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::FenceCreateFlags::SIGNALED, //Create the fence signaled to show that it's free
+			..Default::default()
+		};
+
+		//Create semaphores + fences
+		let image_available_semaphores = unsafe { device.create_semaphore(&semaphore_info, None).expect("Failed to create semaphore") };
+		let render_finished_semaphores = unsafe { device.create_semaphore(&semaphore_info, None).expect("Failed to create semaphore") };
+		let in_flight_fences = unsafe { device.create_fence(&fence_info, None).expect("Failed to create fence") };
+
+		//Return the semaphores + fences in a tuple
+		(image_available_semaphores, render_finished_semaphores, in_flight_fences)
+	}
+
+	//Draw to the surface
+	pub fn draw_frame(&mut self) {
+		//Currently, just have on frame in flight
+		//For mailbox, want as many frames in flight as possible (I think)
+		//For FIFO, want to double buffer (2 frames in flight)
+		let current_frame_fence_array = [self.in_flight_fences];
+
+		//Only waiting for the fence for the current frame. With one frame in flight, this is all there is
+		unsafe { self.device.wait_for_fences(&current_frame_fence_array, true, std::u64::MAX).expect("Failed to wait for fence") }; //No timeout, set as the max u64
+		//After waiting, have to reset the fence
+		unsafe {self.device.reset_fences(&current_frame_fence_array).expect("Failed to reset fences") };
+
+		//Acquire next image from swapchain
+		//The command buffer will be queued on this image index, so will need to use the appropriate command buffer
+		let (image_index, is_suboptimal) = unsafe { self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.image_available_semaphores, vk::Fence::null()).expect("Failed to acquire next swapchain image") };
+
+		//Setup semaphores into arrays to deal with queue submission
+		//Want to wait at the color attachment output stage - don't want to output any colors until the image to write to becomes available
+		//This allows vertex shader to be run while still waiting for a swapchain image
+		let wait_available_array = [self.image_available_semaphores];
+		let wait_pipeline_stage = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+		//This will be the semaphore to signal when the command buffers finish executing
+		let signal_finished_array = [self.render_finished_semaphores];
+
+		//Info for command buffer to be submitted to the queue
+		let submit_infos = [vk::SubmitInfo {
+			s_type: vk::StructureType::SUBMIT_INFO,
+			p_next: ptr::null(),
+			wait_semaphore_count: wait_available_array.len() as u32, //Number of semaphores to wait at
+			p_wait_semaphores: wait_available_array.as_ptr(), //Array of semaphores to wait at
+			p_wait_dst_stage_mask: wait_pipeline_stage.as_ptr(), //Array of pipeline stages that get waited at. These correspond to the p_wait_semaphores
+			command_buffer_count: 1, //Number of command buffers
+			p_command_buffers: &self.command_buffers[image_index as usize], //Which command buffer to queue
+			signal_semaphore_count: signal_finished_array.len() as u32,
+			p_signal_semaphores: signal_finished_array.as_ptr(), //Semaphore to signal when the command buffers finish
+			..Default::default()
+		}];
+
+		//Submit command buffer to queue
+		//Signals fence once the command buffers complete execution - can then reuse the command buffer
+		unsafe {self.device.queue_submit(self.graphics_queue, &submit_infos, self.in_flight_fences).expect("Failed to submit command buffer to queue") };
+
+		//Need an array of the swapchains
+		let swapchains_array = [self.swapchain];
+
+		//Presentation info with semaphores and swapchains and stuff
+		let present_info = vk::PresentInfoKHR {
+			s_type: vk::StructureType::PRESENT_INFO_KHR,
+			p_next: ptr::null(),
+			wait_semaphore_count: signal_finished_array.len() as u32, //Number of semaphores to wait at
+			p_wait_semaphores: signal_finished_array.as_ptr(), //Array of semaphores to wait at
+			swapchain_count: swapchains_array.len() as u32,
+			p_swapchains: swapchains_array.as_ptr(),
+			p_image_indices: &image_index,
+			p_results: ptr::null_mut(), //Can use this to check if presentation was successful for an array of swapchains
+			..Default::default()
+		};
+
+		//Queue an image for presentation
+		unsafe { self.swapchain_loader.queue_present(self.present_queue, &present_info).expect("Failed to execute queue present") };
+	}
+
+	//Wait until idle - will need to call from apphandler when close is requested to make sure drawing/presenting options aren't happening
+	pub fn wait_idle(&mut self) {
+		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
+	}
 }
 
 //Have to destroy anything that was explicitly created
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
 		unsafe {
+			self.device.destroy_semaphore(self.image_available_semaphores, None);
+			self.device.destroy_semaphore(self.render_finished_semaphores, None);
+			self.device.destroy_fence(self.in_flight_fences, None);
+
 			self.device.destroy_command_pool(self.command_pool, None);
 			for framebuffer in &self.swapchain_framebuffers {
 				self.device.destroy_framebuffer(*framebuffer, None);
 			}
+
 			self.device.destroy_pipeline(self.pipeline, None);
 			self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+
 			self.device.destroy_render_pass(self.render_pass, None);
+
 			for swapchain_image_view in &self.swapchain_image_views {
 				self.device.destroy_image_view(*swapchain_image_view, None);
 			}
 			self.swapchain_loader.destroy_swapchain(self.swapchain, None);
+
 			self.device.destroy_device(None);
 			self.surface_loader.destroy_surface(self.surface, None);
 			self.instance.destroy_instance(None);

@@ -3,12 +3,13 @@
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation).
+//CONSIDER: multiple frames in flight for FIFO/MAILBOX modes
 
 
 //#![allow(unused_imports)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
-//#![windows_subsystem = "windows"] //This will disable the terminal popping up when the app is run
+#![windows_subsystem = "windows"] //This will disable the terminal popping up when the app is run
 
 mod render;
 mod utility;

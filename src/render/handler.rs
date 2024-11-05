@@ -13,7 +13,7 @@ use winit::{
 //This will mostly work with winit as an app handler
 pub struct VulkanAppHandler {
 	window: Option<Window>, //Winit window that gets rendered to
-	vulkan_app: Option<pipeline::VulkanApp> //VulkanApp pipeline
+	vulkan_app: Option<pipeline::VulkanApp> //VulkanApp
 }
 
 impl VulkanAppHandler {
@@ -30,9 +30,9 @@ impl VulkanAppHandler {
 	//Match things as a tuple of the key and its press/release state. Later, might also want to pass in something like a character state (grounded, jumpsquat, etc), idk
 	//Not sure how this would handle something like a "sprint key." I think it would have to turn on/off a "sprint" player state on press/release, and the sprint state would change the behavior of other controls (eg walk -> run)
 	//Some people store the key states in a hash set, but I don't think that's necessary in a game context
-	fn controls(event_loop: &ActiveEventLoop, key: &Key, state: ElementState) {
+	fn controls(event_loop: &ActiveEventLoop, key: &Key, key_state: ElementState) {
 		//Matching both the key
-		match (key.as_ref(), state) {
+		match (key.as_ref(), key_state) {
 			(Key::Character("r"), ElementState::Pressed) => {
 				println!("r key pressed");
 			},
@@ -73,17 +73,25 @@ impl ApplicationHandler for VulkanAppHandler {
 				println!("The close button was pressed; stopping");
 				event_loop.exit();
 			},
+
 			//Event when key is pressed
 			//Matches a "KeyboardInput" struct that has "event" field with "Keyevent" struct. This "Keyevent" struct has all the juicy info
 			//Will ignore repeated key events (when a key is held down), as repeat is matched to "false" for this branch
 			WindowEvent::KeyboardInput {event, ..} => {
 				//Get the key WITHOUT any modifiers (like shift)
 				let key = event.key_without_modifiers();
-				let state = event.state;
+				let key_state = event.state;
 				//As long as it's not a repeated key, go into the controls
 				//This was done before in the match statement using "{event: KeyEvent {logical_key: key, state, repeat: false, .. }, ..}" but that broke with key_without_modifiers
-				if !event.repeat {VulkanAppHandler::controls(event_loop, &key, state);};
+				if !event.repeat {VulkanAppHandler::controls(event_loop, &key, key_state);};
 			},
+
+			//Called when OS requests a redraw
+			WindowEvent::RedrawRequested => {
+				self.vulkan_app.as_mut().unwrap().draw_frame();
+				self.vulkan_app.as_mut().unwrap().wait_idle();
+			},
+
 			//Any other event does nothing
 			_ => (),
 		}
