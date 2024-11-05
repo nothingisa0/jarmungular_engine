@@ -773,9 +773,10 @@ impl VulkanApp {
 		//Make a subpass dependency for synchronization stuff
 		//The first implicit subpass that deals with image layout transitions usually executes at the top of the pipeline, when the image from the swapchain may not yet be available
 		//Need to make sure render passes don't begin until the image is available
+		//So this has the color output stage of subpass 0 (the dependent subpass) wait until the color output + write from the dependency (the first implicit subpass)
 		let subpass_dependencies = [vk::SubpassDependency {
-			src_subpass: vk::SUBPASS_EXTERNAL, //"SUBPASS_EXTERNAL" refers to the implicit subpass that happens when automatically transitioning image layouts
-			dst_subpass: 0, //Subpass index
+			src_subpass: vk::SUBPASS_EXTERNAL, //Dependency - "SUBPASS_EXTERNAL" refers to the implicit subpass that happens when automatically transitioning image layouts
+			dst_subpass: 0, //Subpass index of the dependent subpass
 			src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //First implicit subpass must wait until the color attachment output pipeline stage. This will align it with the image available semaphore
 			src_access_mask: vk::AccessFlags::empty(), //This has to do with memory synchronization
 			dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Operations that should wait (writing of the color attachment)
@@ -1107,13 +1108,15 @@ impl VulkanApp {
 	}
 
 	//Allocates and creates command buffers for commands to be submitted to
+	//Currently creating one command buffer per framebuffer (aka one per swapchain image). This can easily extend to multiple frames in flight
+	//This way, commands be recorded here during creation (recording is framebuffer specific, see "render_pass_begin_info"), rather than while drawing a frame
 	fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPool, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffers: &Vec<vk::Framebuffer>, swapchain_extent: vk::Extent2D) -> Vec<vk::CommandBuffer> {
 		let command_buffer_info = vk::CommandBufferAllocateInfo {
 			s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
 			p_next: ptr::null(),
 			command_pool, //Command pool from which command buffer is allocated
 			level: vk::CommandBufferLevel::PRIMARY, //Primary or secondary. Primary command buffers can execute secondary command buffers, kinda like executing a function
-			command_buffer_count: 1, //Number of command buffers to allocate. If doing multiple frames in flight, must have one for each framebuffer (one for each swapchain image)
+			command_buffer_count: framebuffers.len() as u32, //Number of command buffers to allocate. If doing multiple frames in flight, must have one for each framebuffer (one for each swapchain image)
 			..Default::default()
 		};
 
@@ -1173,7 +1176,7 @@ impl VulkanApp {
 			//Command to end the render pass
 			unsafe { device.cmd_end_render_pass(command_buffer)};
 
-			//Command to end command buffer recording
+			//End command buffer recording
 			unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
 		}
 
@@ -1207,10 +1210,8 @@ impl VulkanApp {
 	}
 
 	//Draw to the surface
-	pub fn draw_frame(&mut self) {
+	pub fn draw_frame(&self) {
 		//Currently, just have on frame in flight
-		//For mailbox, want as many frames in flight as possible (I think)
-		//For FIFO, want to double buffer (2 frames in flight)
 		let current_frame_fence_array = [self.in_flight_fences];
 
 		//Only waiting for the fence for the current frame. With one frame in flight, this is all there is
@@ -1269,8 +1270,14 @@ impl VulkanApp {
 	}
 
 	//Wait until idle - will need to call from apphandler when close is requested to make sure drawing/presenting options aren't happening
-	pub fn wait_idle(&mut self) {
+	pub fn wait_idle(&self) {
 		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
+	}
+
+	//Function to call on either an "ERROR_OUT_OF_DATE_KHR" or a window resize event
+	//Gonna have to recreate everything that depends on swapchain/swapchain extents
+	fn resize_window() {
+		
 	}
 }
 

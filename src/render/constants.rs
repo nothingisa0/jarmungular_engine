@@ -3,8 +3,8 @@ use std::ffi::CStr;
 
 //Consts for window creation
 pub const WINDOW_TITLE: &str = "peepee poopoo";
-pub const WINDOW_WIDTH: u32 = 800;
-pub const WINDOW_HEIGHT: u32 = 600;
+pub const WINDOW_WIDTH: u32 = 1280;
+pub const WINDOW_HEIGHT: u32 = 720;
 
 //Desired presentation mode option. Check for this in "VulkanApp::choose_presentation_mode" fn
 pub const DESIRED_PRESENTATION_MODE: vk::PresentModeKHR = vk::PresentModeKHR::MAILBOX;
