@@ -1209,6 +1209,8 @@ impl VulkanApp {
 		(image_available_semaphores, render_finished_semaphores, in_flight_fences)
 	}
 
+	//A little note - all of the above functions didn't use "self" because they were to be called in "init_vulkan." These next ones are gonna be gucci
+
 	//Draw to the surface
 	pub fn draw_frame(&self) {
 		//Currently, just have on frame in flight
@@ -1216,12 +1218,14 @@ impl VulkanApp {
 
 		//Only waiting for the fence for the current frame. With one frame in flight, this is all there is
 		unsafe { self.device.wait_for_fences(&current_frame_fence_array, true, std::u64::MAX).expect("Failed to wait for fence") }; //No timeout, set as the max u64
-		//After waiting, have to reset the fence
-		unsafe {self.device.reset_fences(&current_frame_fence_array).expect("Failed to reset fences") };
 
 		//Acquire next image from swapchain
 		//The command buffer will be queued on this image index, so will need to use the appropriate command buffer
 		let (image_index, is_suboptimal) = unsafe { self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.image_available_semaphores, vk::Fence::null()).expect("Failed to acquire next swapchain image") };
+		
+		//After waiting, have to reset the fence
+		//Delay resetting fence until we know acquire_next_image succeeded, (this was relevant for window resizes in the tutorial, but not here with the app handler)
+		unsafe {self.device.reset_fences(&current_frame_fence_array).expect("Failed to reset fences") };
 
 		//Setup semaphores into arrays to deal with queue submission
 		//Want to wait at the color attachment output stage - don't want to output any colors until the image to write to becomes available
@@ -1274,10 +1278,70 @@ impl VulkanApp {
 		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
 	}
 
-	//Function to call on either an "ERROR_OUT_OF_DATE_KHR" or a window resize event
+	//Function to call on a window resize event
+	//Would also want to do it on a "ERROR_OUT_OF_DATE_KHR" error from "acquire_next_image," but then "draw_frame" would require the window as an argument and would be mutable - just not necessary yet
 	//Gonna have to recreate everything that depends on swapchain/swapchain extents
-	fn resize_window() {
-		
+	pub fn recreate_swapchain(&mut self, window: &Window) {
+		println!("Window resized!");
+
+		//First, wait until program isn't doing anything
+		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
+
+		//Destroy the stuff that'll be replaced
+		//Also need to free the command buffers - not destroying the command pool, so need to go directly to command buffers for this
+		unsafe {
+			self.device.free_command_buffers(self.command_pool, &self.command_buffers);
+
+			for framebuffer in &self.swapchain_framebuffers {
+				self.device.destroy_framebuffer(*framebuffer, None);
+			}
+
+			self.device.destroy_pipeline(self.pipeline, None);
+			self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+
+			self.device.destroy_render_pass(self.render_pass, None);
+
+			for swapchain_image_view in &self.swapchain_image_views {
+				self.device.destroy_image_view(*swapchain_image_view, None);
+			}
+			self.swapchain_loader.destroy_swapchain(self.swapchain, None);
+
+			self.surface_loader.destroy_surface(self.surface, None);
+		}
+
+		//To recreate swapchain, need new surface/surface loader
+		//Need to pass in the new window dimensions
+		let surface_req = VulkanApp::create_surface(&self.entry, &self.instance, window);
+		//Also need queue family indices
+		let queue_family_indices = QueueFamilyIndices::find_queue_families(&self.instance, self.physical_device, &surface_req);
+
+		//Now, recreate swapchain based on new surface
+		let swapchain_req = VulkanApp::create_swapchain(&self.instance, &self.device, self.physical_device, &surface_req, &queue_family_indices);
+		//Recreate the image views
+		let swapchain_image_views = VulkanApp::create_image_views(&self.device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
+		//Recreate the render pass
+		let render_pass = VulkanApp::create_render_pass(&self.device, swapchain_req.swapchain_format.format);
+		//Recreate a pipeline
+		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&self.device, render_pass, swapchain_req.swapchain_extent);
+		//Recreate the framebuffers that contain the image views for the swapchain images as attachments
+		let swapchain_framebuffers = VulkanApp::create_framebuffers(&self.device, render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
+		//Recreate the command buffers with all the recorded commands
+		let command_buffers = VulkanApp::create_command_buffers(&self.device, self.command_pool, render_pass, pipeline, &swapchain_framebuffers, swapchain_req.swapchain_extent);
+
+		//Update everything in VulkanApp that needs to be updated
+		self.surface = surface_req.surface;
+		self.surface_loader = surface_req.surface_loader;
+
+		self.swapchain = swapchain_req.swapchain;
+		self.swapchain_loader = swapchain_req.swapchain_loader;
+		self.swapchain_image_views = swapchain_image_views;
+		self.swapchain_framebuffers = swapchain_framebuffers;
+
+		self.render_pass = render_pass;
+		self.pipeline = pipeline;
+		self.pipeline_layout = pipeline_layout;
+
+		self.command_buffers = command_buffers;
 	}
 }
 

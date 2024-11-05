@@ -89,6 +89,19 @@ impl ApplicationHandler for VulkanAppHandler {
 				self.close_app(event_loop);
 			},
 
+			//Called when OS requests a redraw
+			WindowEvent::RedrawRequested => {
+				//Make new variables for references to the app/window (to call methods on, pass into funtions)
+				let vulkan_app = self.vulkan_app.as_ref().unwrap();
+				let window = self.window.as_ref().unwrap();
+
+				vulkan_app.draw_frame();
+
+				//Request a redraw again for next frame
+				//There's probably a much better way to do a main game loop, but this is okay for now
+				self.window.as_ref().unwrap().request_redraw();
+			},
+
 			//Event when key is pressed
 			//Matches a "KeyboardInput" struct that has "event" field with "Keyevent" struct. This "Keyevent" struct has all the juicy info
 			//Will ignore repeated key events (when a key is held down), as repeat is matched to "false" for this branch
@@ -101,11 +114,15 @@ impl ApplicationHandler for VulkanAppHandler {
 				if !event.repeat {self.controls(event_loop, &key, key_state);};
 			},
 
-			//Called when OS requests a redraw
-			WindowEvent::RedrawRequested => {
-				self.vulkan_app.as_ref().unwrap().draw_frame();
-				self.window.as_ref().unwrap().request_redraw()
-			},
+			//Called when window is resized
+			WindowEvent::Resized(size) => {
+				//Make new variables for references to the app/window (to call methods on, pass into funtions)
+				let vulkan_app = self.vulkan_app.as_mut().unwrap();
+				let window = self.window.as_ref().unwrap();
+
+				//Recreate the swapchain and all the jazz that comes with it
+				vulkan_app.recreate_swapchain(window);
+			}
 
 			//Any other event does nothing
 			_ => (),
