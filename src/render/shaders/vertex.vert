@@ -9,9 +9,9 @@ layout(location = 0) out vec3 fragColor;
 
 //This is just going to give positions of the vertex in clip space at the moment. In the future, should be able to take world space and transform to NDC
 vec2 positions[3] = vec2[](
-	vec2(0.0, 0.5),
-	vec2(0.5, 0.5),
-	vec2(-0.5, -0.5)
+	vec2(0.0, -0.5),
+	vec2(-0.5, 0.5),
+	vec2(0.5, 0.5)
 );
 
 //Predefined color array as well

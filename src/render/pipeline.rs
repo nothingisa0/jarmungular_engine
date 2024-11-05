@@ -619,10 +619,10 @@ impl VulkanApp {
 		let present_mode = VulkanApp::choose_presentation_mode(swapchain_support_details.present_modes);
 		let extent = VulkanApp::choose_swapchain_extent(swapchain_support_details.capabilities);
 
-		println!("\nSWAPCHAIN INFORMATION:");
-		println!("Chosen surface_format: {:?}", surface_format);
-		println!("Chosen present mode: {:?}", present_mode);
-		println!("Chosen extent: {:?}", extent);
+		println!("Swapchain information:");
+		println!("\tChosen surface_format: {:?}", surface_format);
+		println!("\tChosen present mode: {:?}", present_mode);
+		println!("\tChosen extent: {:?}", extent);
 
 		//Swapchain image count. Seems like the driver may hijack some in some cases, making more than the requested minimum.
 		//This is relevant for double/triple buffering if in FIFO.
