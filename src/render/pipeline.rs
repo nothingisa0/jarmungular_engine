@@ -259,7 +259,7 @@ impl VulkanApp {
 		//Create logical device and graphics/present queue
 		let (device, graphics_queue, present_queue) = VulkanApp::create_logical_device(&instance, physical_device, &queue_family_indices, &surface_req, enable_layer_names);
 		//Create swapchain (and all the fun stuff that comes with it)
-		let swapchain_req = VulkanApp::create_swapchain(&instance, &device, physical_device, &surface_req, &queue_family_indices);
+		let swapchain_req = VulkanApp::create_swapchain(&instance, &device, physical_device, &surface_req, &queue_family_indices, WINDOW_WIDTH, WINDOW_HEIGHT);
 		//Create image views for all the swapchain images
 		let swapchain_image_views = VulkanApp::create_image_views(&device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
 		//Create the render pass
@@ -586,9 +586,9 @@ impl VulkanApp {
 	//This gives the size of the swapchin in pixels
 	//Clamp it to our min/max from the swapchain's capabilities
 	//Not optimized compared to vulkan-tutorial-rust. They do a check for an unbounded width/height first, but whatev
-	fn choose_swapchain_extent(capabilities: vk::SurfaceCapabilitiesKHR) -> vk::Extent2D {
-		let mut width = WINDOW_WIDTH;
-		let mut height = WINDOW_HEIGHT;
+	fn choose_swapchain_extent(capabilities: vk::SurfaceCapabilitiesKHR, window_width: u32, window_height: u32) -> vk::Extent2D {
+		let mut width = window_width;
+		let mut height = window_height;
 
 		//Clamp!! There's a clamp function num::clamp but I don't wanna use it teehee
 		if width < capabilities.min_image_extent.width {
@@ -612,12 +612,12 @@ impl VulkanApp {
 	}
 
 	//Use all the "chooser" functions then make the swapchain
-	fn create_swapchain(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice, surface_req: &SurfaceReq, queue_family_indices: &QueueFamilyIndices) -> SwapchainReq {
+	fn create_swapchain(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice, surface_req: &SurfaceReq, queue_family_indices: &QueueFamilyIndices, window_width: u32, window_height: u32) -> SwapchainReq {
 		//Get all the fun info that's required for swapchain creation
 		let swapchain_support_details = SwapchainSupportDetails::query_swapchain_support_details(physical_device, surface_req);
 		let surface_format = VulkanApp::choose_swapchain_format(swapchain_support_details.formats);
 		let present_mode = VulkanApp::choose_presentation_mode(swapchain_support_details.present_modes);
-		let extent = VulkanApp::choose_swapchain_extent(swapchain_support_details.capabilities);
+		let extent = VulkanApp::choose_swapchain_extent(swapchain_support_details.capabilities, window_width, window_height);
 
 		//Swapchain image count. Seems like the driver may hijack some in some cases, making more than the requested minimum.
 		//This is relevant for double/triple buffering if in FIFO.
@@ -765,16 +765,17 @@ impl VulkanApp {
 			..Default::default()
 		};
 
-		//Make a subpass dependency for synchronization stuff
-		//The first implicit subpass that deals with image layout transitions usually executes at the top of the pipeline, when the image from the swapchain may not yet be available
-		//Need to make sure render passes don't begin until the image is available
-		//So this has the color output stage of subpass 0 (the dependent subpass) wait until the color output + write from the dependency (the first implicit subpass)
+		//Make a subpass dependency for synchronization stuff - image layout transition in render pass must wait until 
+		//The first implicit subpass has an implicit subpass dependency already, but that dependency is at the top of the pipe
+		//Need to make sure render passes don't begin until the image is available, but without this, there's nothing stopping a subpass from executing at the top of the pipe
+		//So this has the color output stage of subpass 0 (the dependent subpass) wait until the color output + write from the dependency (the first implicit subpass), which won't happen while the semaphore is a thing
+		//Some drivers take care of this on their own, but it's good to be explicit
 		let subpass_dependencies = [vk::SubpassDependency {
-			src_subpass: vk::SUBPASS_EXTERNAL, //Dependency - "SUBPASS_EXTERNAL" refers to the implicit subpass that happens when automatically transitioning image layouts
+			src_subpass: vk::SUBPASS_EXTERNAL, //Dependency - "SUBPASS_EXTERNAL" refers to operations that happen before the render pass
 			dst_subpass: 0, //Subpass index of the dependent subpass
-			src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //First implicit subpass must wait until the color attachment output pipeline stage. This will align it with the image available semaphore
+			src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Stage of the src subpass for the dst subpass to wait for - once the src subpass gets here, the dst subpass is allowed to go ahead
 			src_access_mask: vk::AccessFlags::empty(), //This has to do with memory synchronization
-			dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Operations that should wait (writing of the color attachment)
+			dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Operations that should wait (writing of the color attachment) - so the render pass is allowed to execute up to this point
 			dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
 			dependency_flags: vk::DependencyFlags::empty(),
 		}];
@@ -1318,7 +1319,7 @@ impl VulkanApp {
 		let queue_family_indices = QueueFamilyIndices::find_queue_families(&self.instance, self.physical_device, &surface_req);
 
 		//Now, recreate swapchain based on new surface
-		let swapchain_req = VulkanApp::create_swapchain(&self.instance, &self.device, self.physical_device, &surface_req, &queue_family_indices);
+		let swapchain_req = VulkanApp::create_swapchain(&self.instance, &self.device, self.physical_device, &surface_req, &queue_family_indices, window.inner_size().width, window.inner_size().height);
 		//Recreate the image views
 		let swapchain_image_views = VulkanApp::create_image_views(&self.device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
 

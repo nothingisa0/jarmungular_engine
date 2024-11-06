@@ -99,7 +99,7 @@ impl ApplicationHandler for VulkanAppHandler {
 
 				//Request a redraw again for next frame
 				//There's probably a much better way to do a main game loop, but this is okay for now
-				//window.request_redraw();
+				window.request_redraw();
 			},
 
 			//Event when key is pressed
