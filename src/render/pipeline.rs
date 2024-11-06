@@ -619,11 +619,6 @@ impl VulkanApp {
 		let present_mode = VulkanApp::choose_presentation_mode(swapchain_support_details.present_modes);
 		let extent = VulkanApp::choose_swapchain_extent(swapchain_support_details.capabilities);
 
-		println!("Swapchain information:");
-		println!("\tChosen surface_format: {:?}", surface_format);
-		println!("\tChosen present mode: {:?}", present_mode);
-		println!("\tChosen extent: {:?}", extent);
-
 		//Swapchain image count. Seems like the driver may hijack some in some cases, making more than the requested minimum.
 		//This is relevant for double/triple buffering if in FIFO.
 		//Mailbox is kinda like a "fast triple buffering" option. It SHOULD have the latency of double buffering, while also displaying the most recently presented image (no game slowdown on lag).
@@ -1221,7 +1216,11 @@ impl VulkanApp {
 
 		//Acquire next image from swapchain
 		//The command buffer will be queued on this image index, so will need to use the appropriate command buffer
-		let (image_index, is_suboptimal) = unsafe { self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.image_available_semaphores, vk::Fence::null()).expect("Failed to acquire next swapchain image") };
+		let (image_index, is_suboptimal) = match unsafe { self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.image_available_semaphores, vk::Fence::null())} {
+			Ok((image_index, is_suboptimal)) => (image_index, is_suboptimal),
+			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return, //If the swapchain image is out of date, return out of this function without drawing the frame
+			_ => panic!("Failed to acquire next swapchain image")
+		};
 		
 		//After waiting, have to reset the fence
 		//Delay resetting fence until we know acquire_next_image succeeded, (this was relevant for window resizes in the tutorial, but not here with the app handler)
@@ -1270,7 +1269,12 @@ impl VulkanApp {
 		};
 
 		//Queue an image for presentation
-		unsafe { self.swapchain_loader.queue_present(self.present_queue, &present_info).expect("Failed to execute queue present") };
+		//If "ERROR_OUT_OF_DATE_KHR" error happens, it means the apphandler didn't handle the resize, so one of the window dimensions must be zero
+		match unsafe { self.swapchain_loader.queue_present(self.present_queue, &present_info) } {
+			Ok(_) => (),
+			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => (), //If the swapchain image is out of date, return out of this function without drawing the frame
+			_ => panic!("Failed to execute queue present")
+		}
 	}
 
 	//Wait until idle - will need to call from apphandler when close is requested to make sure drawing/presenting options aren't happening
@@ -1282,13 +1286,11 @@ impl VulkanApp {
 	//Would also want to do it on a "ERROR_OUT_OF_DATE_KHR" error from "acquire_next_image," but then "draw_frame" would require the window as an argument and would be mutable - just not necessary yet
 	//Gonna have to recreate everything that depends on swapchain/swapchain extents
 	pub fn recreate_swapchain(&mut self, window: &Window) {
-		println!("Window resized!");
-
-		//First, wait until program isn't doing anything
+		//Wait until program isn't doing anything to destroy/recreate
 		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
 
 		//Destroy the stuff that'll be replaced
-		//Also need to free the command buffers - not destroying the command pool, so need to go directly to command buffers for this
+		//Need to free the command buffers - not destroying the command pool, so need to go directly to command buffers for this
 		unsafe {
 			self.device.free_command_buffers(self.command_pool, &self.command_buffers);
 
@@ -1319,6 +1321,7 @@ impl VulkanApp {
 		let swapchain_req = VulkanApp::create_swapchain(&self.instance, &self.device, self.physical_device, &surface_req, &queue_family_indices);
 		//Recreate the image views
 		let swapchain_image_views = VulkanApp::create_image_views(&self.device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
+
 		//Recreate the render pass
 		let render_pass = VulkanApp::create_render_pass(&self.device, swapchain_req.swapchain_format.format);
 		//Recreate a pipeline

@@ -99,7 +99,7 @@ impl ApplicationHandler for VulkanAppHandler {
 
 				//Request a redraw again for next frame
 				//There's probably a much better way to do a main game loop, but this is okay for now
-				self.window.as_ref().unwrap().request_redraw();
+				//window.request_redraw();
 			},
 
 			//Event when key is pressed
@@ -110,7 +110,7 @@ impl ApplicationHandler for VulkanAppHandler {
 				let key = event.key_without_modifiers();
 				let key_state = event.state;
 				//As long as it's not a repeated key, go into the "controls" fn
-				//This was done before in the match statement using "{event: KeyEvent {logical_key: key, state, repeat: false, .. }, ..}" but that broke with key_without_modifiers
+				//This was done before in the match statement using "{event: KeyEvent {logical_key: key, state, repeat: false, .. }, ..}" but that broke the key_without_modifiers
 				if !event.repeat {self.controls(event_loop, &key, key_state);};
 			},
 
@@ -119,9 +119,15 @@ impl ApplicationHandler for VulkanAppHandler {
 				//Make new variables for references to the app/window (to call methods on, pass into funtions)
 				let vulkan_app = self.vulkan_app.as_mut().unwrap();
 				let window = self.window.as_ref().unwrap();
-
-				//Recreate the swapchain and all the jazz that comes with it
-				vulkan_app.recreate_swapchain(window);
+				
+				//Make sure window width > 0 and height > 0. If not, we won't do any resizing/drawing
+				let width = window.inner_size().width;
+				let height = window.inner_size().height;
+				
+				//If width and height are both nonzero, recreate the swapchain and all the jazz that comes with it
+				if width > 0 && height > 0 {
+					vulkan_app.recreate_swapchain(window);
+				}
 			}
 
 			//Any other event does nothing
