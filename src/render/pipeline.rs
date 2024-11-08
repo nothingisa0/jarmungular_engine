@@ -1,4 +1,7 @@
 use crate::render::constants::*;
+use crate::utility::read::{fragment_shader, vertex_shader};
+use crate::render::Vertex;
+use crate::render::TEST_TRIANGLE_VERTICES;
 
 use ash::{vk, khr, Entry};
 use winit::{
@@ -183,6 +186,9 @@ pub struct VulkanApp {
 	pipeline: vk::Pipeline, //A graphics pipeline with all the shaders + fixed functions in there
 	pipeline_layout: vk::PipelineLayout, //Deals with descriptor sets and push constants for pipeline to access
 
+	vertex_buffer: vk::Buffer, //Buffer used to hold all the juicy vertex data
+	vertex_buffer_memory: vk::DeviceMemory, //The memory the vertex buffer is allocated to
+
 	command_pool: vk::CommandPool, //Deals with memory stuff for the command buffers
 	command_buffers: Vec<vk::CommandBuffer>, //Records commands which are then submitted to a queue
 
@@ -268,6 +274,8 @@ impl VulkanApp {
 		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&device, render_pass, swapchain_req.swapchain_extent);
 		//Create the framebuffers that contain the image views for the swapchain images as attachments
 		let swapchain_framebuffers = VulkanApp::create_framebuffers(&device, render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
+		//Create the vertex buffer
+		let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &device, physical_device);
 		//Create the command pool for the graphics family
 		let command_pool = VulkanApp::create_command_pool(&device, &queue_family_indices);
 		//Create the command buffers with all the recorded commands
@@ -298,6 +306,9 @@ impl VulkanApp {
 			render_pass,
 			pipeline,
 			pipeline_layout,
+
+			vertex_buffer,
+			vertex_buffer_memory,
 
 			command_pool,
 			command_buffers,
@@ -774,9 +785,9 @@ impl VulkanApp {
 			src_subpass: vk::SUBPASS_EXTERNAL, //Dependency - "SUBPASS_EXTERNAL" refers to operations that happen before the render pass
 			dst_subpass: 0, //Subpass index of the dependent subpass
 			src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Stage of the src subpass for the dst subpass to wait for - once the src subpass gets here, the dst subpass is allowed to go ahead
-			src_access_mask: vk::AccessFlags::empty(), //This has to do with memory synchronization
+			src_access_mask: vk::AccessFlags::empty(), //We're not waiting on any memory dependency, we just need to know that the color output stage (and thus the semaphore + swapchain image acquisition) has executed
 			dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, //Operations that should wait (writing of the color attachment) - so the render pass is allowed to execute up to this point
-			dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+			dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE, //Dst subpass waits on writing to the color attachment
 			dependency_flags: vk::DependencyFlags::empty(),
 		}];
 
@@ -806,8 +817,8 @@ impl VulkanApp {
 		//Start with the programmable pipeline stages
 		//Read the spirv files for the vertex/fragment shaders
 		//Shader modules should be destroyed after pipeline creation
-		let fragment_shader_code = std::include_bytes!("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/fragment.spv").to_vec(); //Include at compile time
-		let vertex_shader_code = std::include_bytes!("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/vertex.spv").to_vec(); //Include at compile time
+		let fragment_shader_code = fragment_shader();
+		let vertex_shader_code = vertex_shader();
 
 		//Create the shader modules from those files
 		let fragment_shader_module = VulkanApp::create_shader_module(device, fragment_shader_code);
@@ -848,16 +859,19 @@ impl VulkanApp {
 		//Start by making a vec to track any states we want to make dynamic. Will just push flags in there as we go
 		let mut dynamic_states = vec![];
 
+		//Get binding + attribute descriptions for the vertex input stage
+		let binding_descriptions = Vertex::get_binding_descriptions();
+		let attribute_descriptions = Vertex::get_attribute_descriptions();
+
 		//Vertex input create info. This has to do with has vertices are passed to the vertex shader
-		//Because vertices are hardcoded into vertex shader at the moment, just leave it empty
 		let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
 			s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineVertexInputStateCreateFlags::empty(),
-			vertex_attribute_description_count: 0,
-			p_vertex_attribute_descriptions: ptr::null(),
-			vertex_binding_description_count: 0,
-			p_vertex_binding_descriptions: ptr::null(),
+			vertex_attribute_description_count: attribute_descriptions.len() as u32,
+			p_vertex_attribute_descriptions: attribute_descriptions.as_ptr(),
+			vertex_binding_description_count: binding_descriptions.len() as u32,
+			p_vertex_binding_descriptions: binding_descriptions.as_ptr(),
 			..Default::default()
 		};
 
@@ -873,32 +887,14 @@ impl VulkanApp {
 		
 		//Viewport and scissor - region of the framebuffer that will be rendered to. We want to make these equal to our WINDOW extent at the current frame
 		//For that reason, must be dynamic
-		let viewports = [vk::Viewport {
-			x: 0.0, //Top left
-			y: 0.0, //Top left
-			width: swapchain_extent.width as f32, //Width should be the same as the width of the swapchain
-			height: swapchain_extent.height as f32, //Height should be the same as the height of the swapchain
-			min_depth: 0.0, //Just keep standard depths
-			max_depth: 1.0
-		}];
-
-		//Setup the scissors to be used with the viewport 
-		let scissors = [vk::Rect2D {
-			offset: vk::Offset2D {x: 0, y: 0}, //No offset
-			extent: swapchain_extent //Bake in swapchain extent for the scissors
-		}];
-
-		//Viewport and scissor - region of the framebuffer that will be rendered to. We want to make these equal to our WINDOW extent at the current frame
-		//For that reason, must be dynamic
-		//Only the counts matter for the viewport state info, since the rest will be dynamic
 		let viewport_state_info = vk::PipelineViewportStateCreateInfo {
 			s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineViewportStateCreateFlags::empty(),
-			viewport_count: viewports.len() as u32,
-			p_viewports: viewports.as_ptr(), //Ignored if dynamic state
-			scissor_count: scissors.len() as u32,
-			p_scissors: scissors.as_ptr(), //Ignored if dynamic state
+			viewport_count: 1, //Must specify count even if dynamic
+			p_viewports: ptr::null(), //Ignored if dynamic state
+			scissor_count: 1, //Must specify count even if dynamic
+			p_scissors: ptr::null(), //Ignored if dynamic state
 			..Default::default()
 		};
 
@@ -1109,6 +1105,79 @@ impl VulkanApp {
 		framebuffers
 	}
 
+	//Creates a vertex buffer - will hold vertex data
+	fn create_vertex_buffer(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice) -> (vk::Buffer, vk::DeviceMemory) {
+		//Buffer creation info
+		let buffer_info = vk::BufferCreateInfo {
+			s_type: vk::StructureType::BUFFER_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::BufferCreateFlags::empty(), //There's some flags to make it a sparce resource - don't need them
+			size: core::mem::size_of_val(&TEST_TRIANGLE_VERTICES) as u64, //Size of all the vertex data
+			usage: vk::BufferUsageFlags::VERTEX_BUFFER, //Buffer usage. This will be a vertex buffer
+			sharing_mode: vk::SharingMode::EXCLUSIVE, //Doesn't need to be shared - will only be used by the graphics queue
+			queue_family_index_count: 0, //Ignored if sharing mode is exclusive
+			p_queue_family_indices: ptr::null(), //Ignored if sharing mode is exclusive
+			..Default::default()
+		};
+
+		//Create the vertex buffer
+		let vertex_buffer = unsafe { device.create_buffer(&buffer_info, None).expect("Failed to create vertex buffer") };
+
+		//Get that buffer's memory requirements - required size may differ from the size specified during buffer creation
+		let buffer_memory_requirements = unsafe { device.get_buffer_memory_requirements(vertex_buffer) };
+
+		//Need to find the right type of GPU memory to use - first, setup the required memory flags for memory types that are both host visible and host coherent
+		let required_memory_flags = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+		//Then query the GPU using "find_memory_type_index"
+		let memory_type_index = VulkanApp::find_memory_type_index(instance, physical_device, buffer_memory_requirements.memory_type_bits, required_memory_flags);
+
+		//After getting the appropriate memory type index, can fill out memory allocation info
+		let memory_allocate_info = vk::MemoryAllocateInfo {
+			s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
+			p_next: ptr::null(),
+			allocation_size: buffer_memory_requirements.size,
+			memory_type_index: memory_type_index,
+			..Default::default()
+		};
+
+		//Allocate the memory
+		let vertex_buffer_memory = unsafe { device.allocate_memory(&memory_allocate_info, None).expect("Failed to allocate device memory") };
+
+		//Associate the allocated memory to the buffer by binding it - no offset, since the memory is specifically allocated for this buffer
+		unsafe { device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).expect("Failed to bind buffer memory") };
+
+		//Have to fill the vertex buffer - map buffer memory into CPU accessible memory
+		//This gives a pointer to a region of mappable memory
+		let p_mappable = unsafe { device.map_memory(vertex_buffer_memory, 0, buffer_info.size, vk::MemoryMapFlags::empty()).expect("Failed to map device memory") as *mut Vertex};
+		//Copy the data into that mappable memory - rust equivalent of "memcpy"
+		unsafe { ptr::copy_nonoverlapping(TEST_TRIANGLE_VERTICES.as_ptr(), p_mappable, TEST_TRIANGLE_VERTICES.len()) };
+		//Unmap the memory. Typically we can't guarantee the order, and would have to use "vkFlushMappedMemoryRanges" and "vkInvalidateMappedMemoryRanges"
+		//The memory was chosen to be host coherent with "vk::MemoryPropertyFlags::HOST_COHERENT" so they aren' needed
+		unsafe { device.unmap_memory(vertex_buffer_memory) };
+
+		//Return the vertex buffer as well as its memory to be freed later
+		(vertex_buffer, vertex_buffer_memory)
+	}
+
+	//Finds the right type of GPU memory for whatever we want to do, return the index for that memory type
+	//Chooses based on memory types. Doesn't worry about the specific memory heap at the moment
+	fn find_memory_type_index(instance: &ash::Instance, physical_device: vk::PhysicalDevice, type_filter: u32, required_properties: vk::MemoryPropertyFlags) -> u32 {
+		//Query for available types of memory
+		//This will give a "VkPhysicalDeviceMemoryProperties" with the available memory types and heaps
+		let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
+		//Loop through the memory types, check against the type filter, also check that it's suitable
+		for (memory_index, memory_type) in memory_properties.memory_types.iter().enumerate() {
+			let memory_type_bits = 1 << memory_index; //Memory type bits contains a bit set for every supported memory type for the resource, corresponding to the memory index i
+			
+			//Check to make sure the memory type bits are the desired ones from the type filter, and also it has at least the required properties
+			//Basically, checking that it satisfies the buffer requirements and the physical device requirements
+			if (type_filter & memory_type_bits) > 0 && (memory_type.property_flags & required_properties) == required_properties {
+				return memory_index as u32
+			}
+		}
+		panic!("Failed to find suitable memory type");
+	}
+
 	//Creates a command pool - used to manage memory for command buffers
 	fn create_command_pool(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> vk::CommandPool {
 		let command_pool_info = vk::CommandPoolCreateInfo {
@@ -1145,7 +1214,7 @@ impl VulkanApp {
 	//Will record during frame draw
 	//When only frame is in flight, it's probably faster to reuse one command buffer and just rerecord it for the appropiate swapchain image
 	//Frames in flight are only there to give CPU something to do while GPU chugs away, but they increase lag by letting the CPU game physics go farther ahead than the rendering
-	fn record_command_buffer(device: &ash::Device, command_buffer: vk::CommandBuffer, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffer: vk::Framebuffer, window_width: u32, window_height: u32) {
+	fn record_command_buffer(device: &ash::Device, command_buffer: vk::CommandBuffer, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffer: vk::Framebuffer, vertex_buffer: vk::Buffer, window_width: u32, window_height: u32) {
 		//Start with the command buffer begin info
 		let command_buffer_begin_info = vk::CommandBufferBeginInfo {
 			s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
@@ -1186,9 +1255,14 @@ impl VulkanApp {
 		unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) }; //Inline: subpass commands will be in primary command buffer, no secondary command buffers
 
 		//Bind the pipeline to the render pass
-		//Pipeline bind point
+		//Pipeline bind point is graphics - not using compute
 		//Dynamic states would be set here, if they were set up in "create_pipeline" fn
 		unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline) }; //Specified as graphics pipeline, same as specification in render pass subpass
+
+		//Bind the vertex buffer
+		let vertex_buffers = [vertex_buffer];
+		let offsets = [0 as u64];
+		unsafe { device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets) };
 
 		//Setup the viewport
 		let viewports = [vk::Viewport {
@@ -1212,7 +1286,7 @@ impl VulkanApp {
 
 
 		//Draw command
-		unsafe { device.cmd_draw(command_buffer, 3, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
+		unsafe { device.cmd_draw(command_buffer, TEST_TRIANGLE_VERTICES.len() as u32, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
 
 		//Command to end the render pass
 		unsafe { device.cmd_end_render_pass(command_buffer)};
@@ -1246,9 +1320,10 @@ impl VulkanApp {
 		(image_available_semaphores, render_finished_semaphores, in_flight_fences)
 	}
 
-	//A little note - all of the above functions didn't use "self" because they were to be called in "init_vulkan." These next ones are gonna be gucci
+	//A little note - all of the above functions didn't use "self" because they were to be called in "init_vulkan." These next ones aren't, and pertain to when the event loop is running
 
-	//Draw to the surface
+	//Draw a frame to the surface
+	//Because of how this is synchronized, this will draw one frame in parallel with the beginning of the next frame (beginning = up until swapchain framebuffer acquisition)
 	//Need to pass in the window to get width/height
 	pub fn draw_frame(&self, window: &Window) {
 		//If the window is size 0, don't even deal with it
@@ -1273,7 +1348,7 @@ impl VulkanApp {
 
 		//Need the window's width and height to record the command buffer
 		unsafe { self.device.reset_command_buffer(self.command_buffers[0], vk::CommandBufferResetFlags::empty()).expect("Failed to reset command buffer"); } //Reset
-		VulkanApp::record_command_buffer(&self.device, self.command_buffers[0], self.render_pass, self.pipeline, self.swapchain_framebuffers[image_index as usize], window.inner_size().width, window.inner_size().height); //Record
+		VulkanApp::record_command_buffer(&self.device, self.command_buffers[0], self.render_pass, self.pipeline, self.swapchain_framebuffers[image_index as usize], self.vertex_buffer, window.inner_size().width, window.inner_size().height); //Record
 		
 		//After waiting, have to reset the fence
 		//Delay resetting fence until we know acquire_next_image succeeded, in case of any weird behavior with resizing
@@ -1397,6 +1472,9 @@ impl Drop for VulkanApp {
 			self.device.destroy_semaphore(self.image_available_semaphores, None);
 			self.device.destroy_semaphore(self.render_finished_semaphores, None);
 			self.device.destroy_fence(self.in_flight_fences, None);
+
+			self.device.destroy_buffer(self.vertex_buffer, None);
+			self.device.free_memory(self.vertex_buffer_memory, None);
 
 			self.device.destroy_command_pool(self.command_pool, None);
 			for framebuffer in &self.swapchain_framebuffers {
