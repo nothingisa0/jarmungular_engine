@@ -95,7 +95,7 @@ impl ApplicationHandler for VulkanAppHandler {
 				let vulkan_app = self.vulkan_app.as_ref().unwrap();
 				let window = self.window.as_ref().unwrap();
 
-				vulkan_app.draw_frame();
+				vulkan_app.draw_frame(window);
 
 				//Request a redraw again for next frame
 				//There's probably a much better way to do a main game loop, but this is okay for now

@@ -177,6 +177,7 @@ pub struct VulkanApp {
 	swapchain_loader: khr::swapchain::Device,
 	swapchain_image_views: Vec<vk::ImageView>, //Image views that describe image access for all the images on the swapchain
 	swapchain_framebuffers: Vec<vk::Framebuffer>, //Framebuffers define the attachments to be written to (image views)
+	swapchain_extent: vk::Extent2D, //The size of the swapchain images
 
 	render_pass: vk::RenderPass, //Describes framebuffer attachments and subpasses for the pipeline
 	pipeline: vk::Pipeline, //A graphics pipeline with all the shaders + fixed functions in there
@@ -270,7 +271,7 @@ impl VulkanApp {
 		//Create the command pool for the graphics family
 		let command_pool = VulkanApp::create_command_pool(&device, &queue_family_indices);
 		//Create the command buffers with all the recorded commands
-		let command_buffers = VulkanApp::create_command_buffers(&device, command_pool, render_pass, pipeline, &swapchain_framebuffers, swapchain_req.swapchain_extent);
+		let command_buffers = VulkanApp::create_command_buffer(&device, command_pool);
 		//Create all the stuff needed to synchronize the draw
 		let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = VulkanApp::create_sync_objects(&device);
 
@@ -292,6 +293,7 @@ impl VulkanApp {
 			swapchain_loader: swapchain_req.swapchain_loader,
 			swapchain_image_views,
 			swapchain_framebuffers,
+			swapchain_extent: swapchain_req.swapchain_extent,
 
 			render_pass,
 			pipeline,
@@ -540,77 +542,7 @@ impl VulkanApp {
 		}
 	}
 
-	//Chooses the surface format for swapchain creation
-	fn choose_swapchain_format(available_formats: Vec<vk::SurfaceFormatKHR>) -> vk::SurfaceFormatKHR {
-		let fallback = available_formats[0];
-		for available_format in available_formats {
-			if available_format.format == vk::Format::R8G8B8A8_SRGB && available_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR {
-				return available_format
-			}
-		}
-		//If the most common srgb format (R8G8B8A8_SRGB) isn't available, just return the first one in the format vec
-		fallback
-	}
-
-	//Choose the presentation mode for swapchain creation
-	//This is where vsync stuff is decided. Vsync off would be "IMMEDIATE"
-	//Prefer mailbox mode for now. Higher cpu/gpu load, but less latency?? (NEEDS TEST) and no tearing (good middle ground)
-	//Mailbox does "drop frames" as opposed to FIFO which slows stuff down. I kinda like that, but we will see if it needs to be changed
-	//Need to consider frames in flight with all these options as well
-	fn choose_presentation_mode(available_present_modes: Vec<vk::PresentModeKHR>) -> vk::PresentModeKHR {
-		let mut present_mode_flag = 0b0000_0000;
-		//Check for desired present modes, set a flag
-		for available_present in available_present_modes {
-			if available_present == vk::PresentModeKHR::MAILBOX {
-				present_mode_flag |= 0b0000_0010;
-			} else if available_present == vk::PresentModeKHR::IMMEDIATE {
-				present_mode_flag |= 0b0000_0001;
-			} else if available_present == DESIRED_PRESENTATION_MODE {
-				present_mode_flag |= 0b0000_0100;
-			}
-		}
-		//Check the flag, go in priority order desired -> mailbox -> immediate -> fifo
-		if present_mode_flag > 0b0000_0010 {
-			DESIRED_PRESENTATION_MODE
-		}
-		else if present_mode_flag > 0b0000_0001 {
-			vk::PresentModeKHR::MAILBOX
-		} else if present_mode_flag > 0b0000_0000 {
-			vk::PresentModeKHR::IMMEDIATE
-		} else {
-			vk::PresentModeKHR::FIFO
-		}
-	}
-
-	//This gives the size of the swapchin in pixels
-	//Clamp it to our min/max from the swapchain's capabilities
-	//Not optimized compared to vulkan-tutorial-rust. They do a check for an unbounded width/height first, but whatev
-	fn choose_swapchain_extent(capabilities: vk::SurfaceCapabilitiesKHR, window_width: u32, window_height: u32) -> vk::Extent2D {
-		let mut width = window_width;
-		let mut height = window_height;
-
-		//Clamp!! There's a clamp function num::clamp but I don't wanna use it teehee
-		if width < capabilities.min_image_extent.width {
-			width = capabilities.min_image_extent.width;
-		}
-		if width > capabilities.max_image_extent.width {
-			width = capabilities.max_image_extent.width;
-		}
-		if height < capabilities.min_image_extent.height {
-			height = capabilities.min_image_extent.height;
-		}
-		if height > capabilities.max_image_extent.height {
-			height = capabilities.max_image_extent.height;
-		}
-
-		//Return an Extent2D
-		vk::Extent2D {
-			width,
-			height
-		}
-	}
-
-	//Use all the "chooser" functions then make the swapchain
+	//Use all the "chooser" functions to make the swapchain
 	fn create_swapchain(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice, surface_req: &SurfaceReq, queue_family_indices: &QueueFamilyIndices, window_width: u32, window_height: u32) -> SwapchainReq {
 		//Get all the fun info that's required for swapchain creation
 		let swapchain_support_details = SwapchainSupportDetails::query_swapchain_support_details(physical_device, surface_req);
@@ -683,6 +615,76 @@ impl VulkanApp {
 			swapchain_format: surface_format,
 			swapchain_extent: extent,
 			swapchain_images
+		}
+	}
+
+	//Chooses the surface format for swapchain creation
+	fn choose_swapchain_format(available_formats: Vec<vk::SurfaceFormatKHR>) -> vk::SurfaceFormatKHR {
+		let fallback = available_formats[0];
+		for available_format in available_formats {
+			if available_format.format == vk::Format::R8G8B8A8_SRGB && available_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR {
+				return available_format
+			}
+		}
+		//If the most common srgb format (R8G8B8A8_SRGB) isn't available, just return the first one in the format vec
+		fallback
+	}
+
+	//Choose the presentation mode for swapchain creation
+	//This is where vsync stuff is decided. Vsync off would be "IMMEDIATE"
+	//Prefer mailbox mode for now. Higher cpu/gpu load, but less latency?? (NEEDS TEST) and no tearing (good middle ground)
+	//Mailbox does "drop frames" as opposed to FIFO which slows stuff down. I kinda like that, but we will see if it needs to be changed
+	//Need to consider frames in flight with all these options as well
+	fn choose_presentation_mode(available_present_modes: Vec<vk::PresentModeKHR>) -> vk::PresentModeKHR {
+		let mut present_mode_flag = 0b0000_0000;
+		//Check for desired present modes, set a flag
+		for available_present in available_present_modes {
+			if available_present == vk::PresentModeKHR::MAILBOX {
+				present_mode_flag |= 0b0000_0010;
+			} else if available_present == vk::PresentModeKHR::IMMEDIATE {
+				present_mode_flag |= 0b0000_0001;
+			} else if available_present == DESIRED_PRESENTATION_MODE {
+				present_mode_flag |= 0b0000_0100;
+			}
+		}
+		//Check the flag, go in priority order desired -> mailbox -> immediate -> fifo
+		if present_mode_flag > 0b0000_0010 {
+			DESIRED_PRESENTATION_MODE
+		}
+		else if present_mode_flag > 0b0000_0001 {
+			vk::PresentModeKHR::MAILBOX
+		} else if present_mode_flag > 0b0000_0000 {
+			vk::PresentModeKHR::IMMEDIATE
+		} else {
+			vk::PresentModeKHR::FIFO
+		}
+	}
+
+	//This gives the size of the swapchin in pixels
+	//Clamp it to our min/max from the swapchain's capabilities
+	//Not optimized compared to vulkan-tutorial-rust. They do a check for an unbounded width/height first, but whatev
+	fn choose_swapchain_extent(capabilities: vk::SurfaceCapabilitiesKHR, window_width: u32, window_height: u32) -> vk::Extent2D {
+		let mut width = window_width;
+		let mut height = window_height;
+
+		//Clamp!! There's a clamp function num::clamp but I don't wanna use it teehee
+		if width < capabilities.min_image_extent.width {
+			width = capabilities.min_image_extent.width;
+		}
+		if width > capabilities.max_image_extent.width {
+			width = capabilities.max_image_extent.width;
+		}
+		if height < capabilities.min_image_extent.height {
+			height = capabilities.min_image_extent.height;
+		}
+		if height > capabilities.max_image_extent.height {
+			height = capabilities.max_image_extent.height;
+		}
+
+		//Return an Extent2D
+		vk::Extent2D {
+			width,
+			height
 		}
 	}
 
@@ -799,8 +801,9 @@ impl VulkanApp {
 
 	//Create the pipeline
 	//Most of the pipeline must be baked. Can configure certain things to be dynamic with "PipelineDynamicStateCreateInfo"
-	//Will likely use dynamic viewport/scissor for window resizes, because it's cheap and much easier to set up
+	//Dynamic states will be recorded into the command buffer after the pipeline is bound
 	fn create_pipeline(device: &ash::Device, render_pass: vk::RenderPass, swapchain_extent: vk::Extent2D) -> (vk::Pipeline, vk::PipelineLayout) {
+		//Start with the programmable pipeline stages
 		//Read the spirv files for the vertex/fragment shaders
 		//Shader modules should be destroyed after pipeline creation
 		let fragment_shader_code = std::include_bytes!("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/fragment.spv").to_vec(); //Include at compile time
@@ -840,6 +843,10 @@ impl VulkanApp {
 
 		//Make an array containing the two pipeline shader stage infos
 		let shader_stages = [fragment_stage_info, vertex_stage_info];
+		
+		//Now it's time for all the fixed function pipeline stages
+		//Start by making a vec to track any states we want to make dynamic. Will just push flags in there as we go
+		let mut dynamic_states = vec![];
 
 		//Vertex input create info. This has to do with has vertices are passed to the vertex shader
 		//Because vertices are hardcoded into vertex shader at the moment, just leave it empty
@@ -863,11 +870,9 @@ impl VulkanApp {
 			primitive_restart_enable: vk::FALSE, //Will allow a "restart" vertex index value that can break shit up. Irrelevant for triangle list mode
 			..Default::default()
 		};
-
-		//Viewport and scissor - region of the framebuffer that will be rendered to. We want to make these equal to our swapchain extent
-		//Usually will be dynamic (ex: resizing a window that has an 800x600 image rendered to it will make the image bigger/smaller)
-		//For now, window resizing is disabled, so just have it baked into the pipeline
-		//Setup arrays for viewports + scissors
+		
+		//Viewport and scissor - region of the framebuffer that will be rendered to. We want to make these equal to our WINDOW extent at the current frame
+		//For that reason, must be dynamic
 		let viewports = [vk::Viewport {
 			x: 0.0, //Top left
 			y: 0.0, //Top left
@@ -883,17 +888,23 @@ impl VulkanApp {
 			extent: swapchain_extent //Bake in swapchain extent for the scissors
 		}];
 
-		//This is a baked viewport. To make it dynamic, use "VkPipelineDynamicStateCreateInfo" instead
+		//Viewport and scissor - region of the framebuffer that will be rendered to. We want to make these equal to our WINDOW extent at the current frame
+		//For that reason, must be dynamic
+		//Only the counts matter for the viewport state info, since the rest will be dynamic
 		let viewport_state_info = vk::PipelineViewportStateCreateInfo {
 			s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineViewportStateCreateFlags::empty(),
 			viewport_count: viewports.len() as u32,
-			p_viewports: viewports.as_ptr(),
+			p_viewports: viewports.as_ptr(), //Ignored if dynamic state
 			scissor_count: scissors.len() as u32,
-			p_scissors: scissors.as_ptr(),
+			p_scissors: scissors.as_ptr(), //Ignored if dynamic state
 			..Default::default()
 		};
+
+		//Viewport and scissors will be dynamic oooh ahhhh
+		dynamic_states.push(vk::DynamicState::VIEWPORT);
+		dynamic_states.push(vk::DynamicState::SCISSOR);
 
 		//Rasterization stage configuration
 		let rasterization_state_info = vk::PipelineRasterizationStateCreateInfo {
@@ -984,6 +995,16 @@ impl VulkanApp {
 			..Default::default()
 		};
 
+		//Dynamic state create info
+		let dynamic_state_info = vk::PipelineDynamicStateCreateInfo {
+			s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineDynamicStateCreateFlags::empty(),
+			dynamic_state_count: dynamic_states.len() as u32,
+			p_dynamic_states: dynamic_states.as_ptr(),
+			..Default::default()
+		};
+
 		//Pipeline layout - describes resources that can be accessed by a pipeline (descriptor sets)
 		let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
 			s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
@@ -1015,7 +1036,7 @@ impl VulkanApp {
 			p_multisample_state: &ms_state_info,
 			p_depth_stencil_state: &depth_stencil_state_info,
 			p_color_blend_state: &color_blend_state_info,
-			p_dynamic_state: ptr::null(),
+			p_dynamic_state: &dynamic_state_info,
 			layout: pipeline_layout, //Defined above
 			render_pass, //Passed into "create_pipeline"
 			subpass: 0, //Subpass index in render pass that this pipeline will be used
@@ -1062,6 +1083,7 @@ impl VulkanApp {
 	//Iterate through image views, create framebuffer for each one
 	fn create_framebuffers(device: &ash::Device, render_pass: vk::RenderPass, image_views: &Vec<vk::ImageView>, swapchain_extent: vk::Extent2D) -> Vec<vk::Framebuffer> {
 		let mut framebuffers = vec![];
+		
 		//Loop through the swapchain image views, get a framebuffer for each one
 		//Need a framebuffer for each image view to write to whenever the swapchain does its whole swap thing
 		for &image_view in image_views {
@@ -1102,80 +1124,104 @@ impl VulkanApp {
 	}
 
 	//Allocates and creates command buffers for commands to be submitted to
-	//Currently creating one command buffer per framebuffer (aka one per swapchain image). This can easily extend to multiple frames in flight
-	//This way, commands be recorded here during creation (recording is framebuffer specific, see "render_pass_begin_info"), rather than while drawing a frame
-	fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPool, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffers: &Vec<vk::Framebuffer>, swapchain_extent: vk::Extent2D) -> Vec<vk::CommandBuffer> {
+	//Currently creating one command buffer for the one frame in flight
+	//Then, command buffers can be reused + rerecorded during frame draw
+	fn create_command_buffer(device: &ash::Device, command_pool: vk::CommandPool) -> Vec<vk::CommandBuffer> {
+		//As long as CPU/GPU are going fast enough, don't need multiple frames in flight
+		//Frames in flight are only there to give CPU something to do while the GPU chugs away, but the CPU will get farther ahead (more input lag)
 		let command_buffer_info = vk::CommandBufferAllocateInfo {
 			s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
 			p_next: ptr::null(),
 			command_pool, //Command pool from which command buffer is allocated
 			level: vk::CommandBufferLevel::PRIMARY, //Primary or secondary. Primary command buffers can execute secondary command buffers, kinda like executing a function
-			command_buffer_count: framebuffers.len() as u32, //Number of command buffers to allocate. If doing multiple frames in flight, must have one for each framebuffer (one for each swapchain image)
+			command_buffer_count: 1, //Number of command buffers to allocate. If doing multiple frames in flight, must have one for each framebuffer (one for each swapchain image)
 			..Default::default()
 		};
 
 		//Allocate the command buffer
-		let command_buffers = unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") };
+		let command_buffer = unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") };
 			
-		//Now record to the command buffers - put in everything we want to do
-		//Recording to a separate command buffer for each swapchain framebuffer. This will be able to handle multiple frames in flight
-		for (i, &command_buffer) in command_buffers.iter().enumerate() {
-			//Start with the command buffer begin info
-			let command_buffer_begin_info = vk::CommandBufferBeginInfo {
-				s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-				p_next: ptr::null(),
-				flags: vk::CommandBufferUsageFlags::empty(), //Flags for rerecording, resubmitting, and if it's a secondary command buffer. None needed here
-				p_inheritance_info: ptr::null(), //Inheritance info for secondary command buffers
-				..Default::default()
-			};
+		//Return the command buffer
+		command_buffer
+	}
 
-			//Begin recording to the command buffer
-			//Remember - the commands submitted to the buffer will NOT necessarily go in order
-			unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info).expect("Failed to begin recording to command buffer") };
+	//Will record during frame draw
+	//When only frame is in flight, it's probably faster to reuse one command buffer and just rerecord it for the appropiate swapchain image
+	//Frames in flight are only there to give CPU something to do while GPU chugs away, but they increase lag by letting the CPU game physics go farther ahead than the rendering
+	fn record_command_buffer(device: &ash::Device, command_buffer: vk::CommandBuffer, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffer: vk::Framebuffer, window_width: u32, window_height: u32) {
+		//Start with the command buffer begin info
+		let command_buffer_begin_info = vk::CommandBufferBeginInfo {
+			s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+			p_next: ptr::null(),
+			flags: vk::CommandBufferUsageFlags::empty(), //Flags for rerecording, resubmitting, and if it's a secondary command buffer. None needed here
+			p_inheritance_info: ptr::null(), //Inheritance info for secondary command buffers
+			..Default::default()
+		};
 
-			//Set the values to clear to, this will be passed to "render_pass_begin_info"
-			//An array containing clear values for each framebufffer attachment that has a loap_op (as defined in the render pass) with clearing
-			//This is a rust union, so it's defined using one field
-			let clear_values = [vk::ClearValue {
-				color: vk::ClearColorValue {float32: [0.0, 0.0, 0.0, 1.0]}, //Black at 100% opacity
-			}];
+		//Begin recording to the command buffer
+		//Remember - the commands submitted to the buffer will NOT necessarily go in order
+		unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info).expect("Failed to begin recording to command buffer") };
 
-			//Render pass begin info
-			let render_pass_begin_info = vk::RenderPassBeginInfo {
-				s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
-				p_next: ptr::null(),
-				render_pass, //The render pass to begin an instance of
-				framebuffer: framebuffers[i], //The framebuffer containing the attachments to use in the render pass
-				render_area: vk::Rect2D { //Render area being affected by the render pass instance
-					offset: vk::Offset2D {x: 0, y: 0},
-					extent: swapchain_extent
-				},
-				clear_value_count: clear_values.len() as u32,
-				p_clear_values: clear_values.as_ptr(),
-				..Default::default()
-			};
+		//Set the values to clear to, this will be passed to "render_pass_begin_info"
+		//An array containing clear values for each framebufffer attachment that has a loap_op (as defined in the render pass) with clearing
+		//This is a rust union, so it's defined using one field
+		let clear_values = [vk::ClearValue {
+			color: vk::ClearColorValue {float32: [0.0, 0.0, 0.0, 1.0]}, //Black at 100% opacity
+		}];
 
-			//Command to begin the render pass
-			//There's a begin_render_pass2, but it only adds a s_type and p_next to the SubpassContents
-			unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) }; //Inline: subpass commands will be in primary command buffer, no secondary command buffers
+		//Render pass begin info
+		let render_pass_begin_info = vk::RenderPassBeginInfo {
+			s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+			p_next: ptr::null(),
+			render_pass, //The render pass to begin an instance of
+			framebuffer: framebuffer, //The framebuffer containing the attachments to use in the render pass
+			render_area: vk::Rect2D { //Render area being affected by the render pass instance
+				offset: vk::Offset2D {x: 0, y: 0},
+				extent: vk::Extent2D {width: window_width, height: window_height}, //Will be different if window is resized
+			},
+			clear_value_count: clear_values.len() as u32,
+			p_clear_values: clear_values.as_ptr(),
+			..Default::default()
+		};
 
-			//Bind the pipeline to the render pass
-			//Pipeline bind point
-			//Dynamic states would be set here, if they were set up in "create_pipeline" fn
-			unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline) }; //Specified as graphics pipeline, same as specification in render pass subpass
+		//Command to begin the render pass
+		//There's a begin_render_pass2, but it only adds a s_type and p_next to the SubpassContents
+		unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) }; //Inline: subpass commands will be in primary command buffer, no secondary command buffers
 
-			//Draw command
-			unsafe { device.cmd_draw(command_buffer, 3, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
+		//Bind the pipeline to the render pass
+		//Pipeline bind point
+		//Dynamic states would be set here, if they were set up in "create_pipeline" fn
+		unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline) }; //Specified as graphics pipeline, same as specification in render pass subpass
 
-			//Command to end the render pass
-			unsafe { device.cmd_end_render_pass(command_buffer)};
+		//Setup the viewport
+		let viewports = [vk::Viewport {
+			x: 0.0, //Top left
+			y: 0.0, //Top left
+			width: window_width as f32, //Window width
+			height: window_height as f32, //Window height
+			min_depth: 0.0, //Just keep standard depths
+			max_depth: 1.0
+		}];
+		//Set viewport
+		unsafe { device.cmd_set_viewport(command_buffer, 0, &viewports); }
 
-			//End command buffer recording
-			unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
-		}
+		//Setup the scissors to be used with the viewport 
+		let scissors = [vk::Rect2D {
+			offset: vk::Offset2D {x: 0, y: 0}, //No offset
+			extent: vk::Extent2D {width: window_width, height: window_height} //Will change based on window size
+		}];
+		//Set the scissors
+		unsafe { device.cmd_set_scissor(command_buffer, 0, &scissors); }
 
-		//Return the command buffers
-		command_buffers
+
+		//Draw command
+		unsafe { device.cmd_draw(command_buffer, 3, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
+
+		//Command to end the render pass
+		unsafe { device.cmd_end_render_pass(command_buffer)};
+
+		//End command buffer recording
+		unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
 	}
 
 	//Create synchronization objects to deal with frames in flight + swapchain sync stuff
@@ -1206,8 +1252,15 @@ impl VulkanApp {
 	//A little note - all of the above functions didn't use "self" because they were to be called in "init_vulkan." These next ones are gonna be gucci
 
 	//Draw to the surface
-	pub fn draw_frame(&self) {
-		//Currently, just have on frame in flight
+	//Need to pass in the window to get width/height
+	pub fn draw_frame(&self, window: &Window) {
+		//If the window is size 0, don't even deal with it
+		//Running into too many problems with keeping the command buffer extent + framebuffer extent + swapchain extent gucchi. Maybe a later solution will be
+		if window.inner_size().width == 0 || window.inner_size().height == 0 {
+			return
+		}
+
+		//Just have on frame in flight
 		let current_frame_fence_array = [self.in_flight_fences];
 
 		//Only waiting for the fence for the current frame. With one frame in flight, this is all there is
@@ -1220,9 +1273,13 @@ impl VulkanApp {
 			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return, //If the swapchain image is out of date, return out of this function without drawing the frame
 			_ => panic!("Failed to acquire next swapchain image")
 		};
+
+		//Need the window's width and height to record the command buffer
+		unsafe { self.device.reset_command_buffer(self.command_buffers[0], vk::CommandBufferResetFlags::empty()).expect("Failed to reset command buffer"); } //Reset
+		VulkanApp::record_command_buffer(&self.device, self.command_buffers[0], self.render_pass, self.pipeline, self.swapchain_framebuffers[image_index as usize], window.inner_size().width, window.inner_size().height); //Record
 		
 		//After waiting, have to reset the fence
-		//Delay resetting fence until we know acquire_next_image succeeded, (this was relevant for window resizes in the tutorial, but not here with the app handler)
+		//Delay resetting fence until we know acquire_next_image succeeded, in case of any weird behavior with resizing
 		unsafe {self.device.reset_fences(&current_frame_fence_array).expect("Failed to reset fences") };
 
 		//Setup semaphores into arrays to deal with queue submission
@@ -1241,7 +1298,7 @@ impl VulkanApp {
 			p_wait_semaphores: wait_available_array.as_ptr(), //Array of semaphores to wait at
 			p_wait_dst_stage_mask: wait_pipeline_stage.as_ptr(), //Array of pipeline stages that get waited at. These correspond to the p_wait_semaphores
 			command_buffer_count: 1, //Number of command buffers
-			p_command_buffers: &self.command_buffers[image_index as usize], //Which command buffer to queue
+			p_command_buffers: &self.command_buffers[0], //Which command buffer to queue - just have the one frame in flight
 			signal_semaphore_count: signal_finished_array.len() as u32,
 			p_signal_semaphores: signal_finished_array.as_ptr(), //Semaphore to signal when the command buffers finish
 			..Default::default()
@@ -1251,7 +1308,7 @@ impl VulkanApp {
 		//Signals fence once the command buffers complete execution - can then reuse the command buffer
 		unsafe {self.device.queue_submit(self.graphics_queue, &submit_infos, self.in_flight_fences).expect("Failed to submit command buffer to queue") };
 
-		//Need an array of the swapchains
+		//Need an array of the swapchains for the present info
 		let swapchains_array = [self.swapchain];
 
 		//Presentation info with semaphores and swapchains and stuff
@@ -1271,7 +1328,7 @@ impl VulkanApp {
 		//If "ERROR_OUT_OF_DATE_KHR" error happens, it means the apphandler didn't handle the resize, so one of the window dimensions must be zero
 		match unsafe { self.swapchain_loader.queue_present(self.present_queue, &present_info) } {
 			Ok(_) => (),
-			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => (), //If the swapchain image is out of date, return out of this function without drawing the frame
+			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return, //If the swapchain image is out of date, return out of this function without drawing the frame
 			_ => panic!("Failed to execute queue present")
 		}
 	}
@@ -1291,16 +1348,9 @@ impl VulkanApp {
 		//Destroy the stuff that'll be replaced
 		//Need to free the command buffers - not destroying the command pool, so need to go directly to command buffers for this
 		unsafe {
-			self.device.free_command_buffers(self.command_pool, &self.command_buffers);
-
 			for framebuffer in &self.swapchain_framebuffers {
 				self.device.destroy_framebuffer(*framebuffer, None);
 			}
-
-			self.device.destroy_pipeline(self.pipeline, None);
-			self.device.destroy_pipeline_layout(self.pipeline_layout, None);
-
-			self.device.destroy_render_pass(self.render_pass, None);
 
 			for swapchain_image_view in &self.swapchain_image_views {
 				self.device.destroy_image_view(*swapchain_image_view, None);
@@ -1310,6 +1360,11 @@ impl VulkanApp {
 			self.surface_loader.destroy_surface(self.surface, None);
 		}
 
+		//Get window width + height being rendered to
+		//Will need when creating swapchains
+		let window_width = window.inner_size().width;
+		let window_height = window.inner_size().height;
+
 		//To recreate swapchain, need new surface/surface loader
 		//Need to pass in the new window dimensions
 		let surface_req = VulkanApp::create_surface(&self.entry, &self.instance, window);
@@ -1317,18 +1372,15 @@ impl VulkanApp {
 		let queue_family_indices = QueueFamilyIndices::find_queue_families(&self.instance, self.physical_device, &surface_req);
 
 		//Now, recreate swapchain based on new surface
-		let swapchain_req = VulkanApp::create_swapchain(&self.instance, &self.device, self.physical_device, &surface_req, &queue_family_indices, window.inner_size().width, window.inner_size().height);
+		let swapchain_req = VulkanApp::create_swapchain(&self.instance, &self.device, self.physical_device, &surface_req, &queue_family_indices, window_width, window_height);
 		//Recreate the image views
 		let swapchain_image_views = VulkanApp::create_image_views(&self.device, swapchain_req.swapchain_format, &swapchain_req.swapchain_images);
-
-		//Recreate the render pass
-		let render_pass = VulkanApp::create_render_pass(&self.device, swapchain_req.swapchain_format.format);
-		//Recreate a pipeline
-		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&self.device, render_pass, swapchain_req.swapchain_extent);
 		//Recreate the framebuffers that contain the image views for the swapchain images as attachments
-		let swapchain_framebuffers = VulkanApp::create_framebuffers(&self.device, render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
-		//Recreate the command buffers with all the recorded commands
-		let command_buffers = VulkanApp::create_command_buffers(&self.device, self.command_pool, render_pass, pipeline, &swapchain_framebuffers, swapchain_req.swapchain_extent);
+		let swapchain_framebuffers = VulkanApp::create_framebuffers(&self.device, self.render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
+
+		//NOT going to recreate the render pass. Theoretically, this might cause problems is window is moved to like an HDR monitor. WHATEVER!
+		//Also not recreating pipeline
+		//And not recreating command buffer, since it's recorded into during frame draw
 
 		//Update everything in VulkanApp that needs to be updated
 		self.surface = surface_req.surface;
@@ -1338,12 +1390,6 @@ impl VulkanApp {
 		self.swapchain_loader = swapchain_req.swapchain_loader;
 		self.swapchain_image_views = swapchain_image_views;
 		self.swapchain_framebuffers = swapchain_framebuffers;
-
-		self.render_pass = render_pass;
-		self.pipeline = pipeline;
-		self.pipeline_layout = pipeline_layout;
-
-		self.command_buffers = command_buffers;
 	}
 }
 
