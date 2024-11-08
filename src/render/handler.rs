@@ -1,5 +1,6 @@
 use crate::render::constants::*;
 use crate::render::pipeline;
+use crate::utility::read::{icon_asset};
 
 use winit::{
 	application::ApplicationHandler,
@@ -68,7 +69,8 @@ impl ApplicationHandler for VulkanAppHandler {
 		let window_attributes = Window::default_attributes()
 			.with_title(WINDOW_TITLE)
 			.with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
-			.with_resizable(true);
+			.with_resizable(true)
+			.with_window_icon(Some(icon_asset()));
 
 		let window = event_loop.create_window(window_attributes).expect("Failed to create window");
 

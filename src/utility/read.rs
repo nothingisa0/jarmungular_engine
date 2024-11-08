@@ -3,6 +3,11 @@
 
 // use std::path::Path;
 // use std::fs::read;
+use winit::window::{Icon};
+
+
+
+
 
 // //Reads shader spirv code
 // pub fn r_shader(shader_path_str: &str) -> Vec<u8> {
@@ -15,3 +20,9 @@
 // 	//Get and return the shader file as a vec of bytes
 // 	read(shader_path).expect("Unable to read shader file")
 // }
+
+//Returns the icon for the app. This is an include, so it'll compile into the exe.
+pub fn icon_asset() -> Icon {
+	let icon_bytes = include_bytes!("C:/Users/jagan/Documents/Code/jarmungular_engine/src/assets/icon.rgba").to_vec();
+	Icon::from_rgba(icon_bytes, 32, 32).expect("Bad icon")
+}

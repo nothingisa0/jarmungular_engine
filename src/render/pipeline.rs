@@ -1138,11 +1138,8 @@ impl VulkanApp {
 			..Default::default()
 		};
 
-		//Allocate the command buffer
-		let command_buffer = unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") };
-			
-		//Return the command buffer
-		command_buffer
+		//Allocate and return the command buffer
+		unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") }
 	}
 
 	//Will record during frame draw
@@ -1174,7 +1171,7 @@ impl VulkanApp {
 			s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
 			p_next: ptr::null(),
 			render_pass, //The render pass to begin an instance of
-			framebuffer: framebuffer, //The framebuffer containing the attachments to use in the render pass
+			framebuffer, //The framebuffer containing the attachments to use in the render pass
 			render_area: vk::Rect2D { //Render area being affected by the render pass instance
 				offset: vk::Offset2D {x: 0, y: 0},
 				extent: vk::Extent2D {width: window_width, height: window_height}, //Will be different if window is resized
@@ -1328,7 +1325,7 @@ impl VulkanApp {
 		//If "ERROR_OUT_OF_DATE_KHR" error happens, it means the apphandler didn't handle the resize, so one of the window dimensions must be zero
 		match unsafe { self.swapchain_loader.queue_present(self.present_queue, &present_info) } {
 			Ok(_) => (),
-			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return, //If the swapchain image is out of date, return out of this function without drawing the frame
+			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => (), //If the swapchain image is out of date, return out of this function without drawing the frame
 			_ => panic!("Failed to execute queue present")
 		}
 	}
