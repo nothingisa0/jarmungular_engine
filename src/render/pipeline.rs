@@ -1,5 +1,4 @@
 use crate::render::constants::*;
-use crate::utility::read::r_shader;
 
 use ash::{vk, khr, Entry};
 use winit::{
@@ -804,8 +803,8 @@ impl VulkanApp {
 	fn create_pipeline(device: &ash::Device, render_pass: vk::RenderPass, swapchain_extent: vk::Extent2D) -> (vk::Pipeline, vk::PipelineLayout) {
 		//Read the spirv files for the vertex/fragment shaders
 		//Shader modules should be destroyed after pipeline creation
-		let fragment_shader_code = r_shader("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/fragment.spv");
-		let vertex_shader_code = r_shader("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/vertex.spv");
+		let fragment_shader_code = std::include_bytes!("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/fragment.spv").to_vec(); //Include at compile time
+		let vertex_shader_code = std::include_bytes!("C:/Users/jagan/Documents/Code/jarmungular_engine/src/render/shaders/vertex.spv").to_vec(); //Include at compile time
 
 		//Create the shader modules from those files
 		let fragment_shader_module = VulkanApp::create_shader_module(device, fragment_shader_code);
