@@ -1,9 +1,12 @@
 //TO DO: fix physical device suitability score so it (hopefully) works on luke's computer and doesn't do the hookapp thing.
 //TO DO: device events for mouse movement
+//TO DO: get rid of multiple command buffers, record to command buffer at runtime. This should be cheaper when only one frame is in flight at a time
+	//Frames in flight are only there to give CPU something to do while GPU chugs away, but they increase lag by letting the CPU game physics go farther ahead than the rendering
 
-//CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). https://stackoverflow.com/questions/61089060/vulkan-render-to-texture
+//CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.
+	//Maybe something like: a render pass for all the mirrors in the scene, depth/stencil prepass (for mirror stencil, might not need, depth prepass may help forward renderer), postprocessing pass, pass that renders to swapchain
 //CONSIDER: Might have to handle minimized windows better. It pretty much pauses presentation right now, which isn't the winit recommended solution.
-//CONSIDER: multiple frames in flight for FIFO/MAILBOX modes
+
 
 
 //#![allow(unused_imports)]

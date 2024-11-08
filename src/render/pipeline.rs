@@ -769,7 +769,6 @@ impl VulkanApp {
 		//The first implicit subpass has an implicit subpass dependency already, but that dependency is at the top of the pipe
 		//Need to make sure render passes don't begin until the image is available, but without this, there's nothing stopping a subpass from executing at the top of the pipe
 		//So this has the color output stage of subpass 0 (the dependent subpass) wait until the color output + write from the dependency (the first implicit subpass), which won't happen while the semaphore is a thing
-		//Some drivers take care of this on their own, but it's good to be explicit
 		let subpass_dependencies = [vk::SubpassDependency {
 			src_subpass: vk::SUBPASS_EXTERNAL, //Dependency - "SUBPASS_EXTERNAL" refers to operations that happen before the render pass
 			dst_subpass: 0, //Subpass index of the dependent subpass
