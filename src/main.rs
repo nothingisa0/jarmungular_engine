@@ -3,7 +3,6 @@
 //TO DO: get rid of multiple command buffers, record to command buffer at runtime. This should be cheaper when only one frame is in flight at a time
 	//Frames in flight are only there to give CPU something to do while GPU chugs away, but they increase lag by letting the CPU game physics go farther ahead than the rendering
 //TO DO: If recording command buffers is done as above, can also try to take pipeline creation + command buffer creation out of "resize swapchain"
-//TO DO: change shader file location path. Figure out how to make the exe work with shader files as a standalone.
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.
 	//Maybe something like: a render pass for all the mirrors in the scene, depth/stencil prepass (for mirror stencil, might not need, depth prepass may help forward renderer), postprocessing pass, pass that renders to swapchain
