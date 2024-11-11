@@ -1,5 +1,6 @@
 pub mod handler;
 pub mod pipeline;
+pub mod memory;
 pub mod constants;
 
 use ash::vk;

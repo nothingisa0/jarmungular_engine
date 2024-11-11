@@ -1,4 +1,5 @@
 use crate::render::constants::*;
+use crate::render::memory::{create_buffer, copy_buffer};
 use crate::utility::read::{fragment_shader, vertex_shader};
 use crate::render::Vertex;
 use crate::render::TEST_TRIANGLE_VERTICES;
@@ -190,14 +191,15 @@ pub struct VulkanApp {
 	vertex_buffer_memory: vk::DeviceMemory, //The memory the vertex buffer is allocated to
 
 	command_pool: vk::CommandPool, //Deals with memory stuff for the command buffers
+	command_pool_short: vk::CommandPool, //Command buffers created from this pool will be short lived
 	command_buffers: Vec<vk::CommandBuffer>, //Records commands which are then submitted to a queue
 
 	//Synchronization objects
 	//Semaphore - used for GPU-GPU synchronization
 	//Fence - used for CPU-GPU synchronization
-	image_available_semaphores: vk::Semaphore, //Signals that an image has been acquired from the swapchain and is ready for rendering
-	render_finished_semaphores: vk::Semaphore, //Signals that rendering is finished, presentation can happen
-	in_flight_fences: vk::Fence, //Signals that a frame is in flight
+	image_available_semaphore: vk::Semaphore, //Signals that an image has been acquired from the swapchain and is ready for rendering
+	render_finished_semaphore: vk::Semaphore, //Signals that rendering is finished, presentation can happen
+	in_flight_fence: vk::Fence, //Signals that a frame is in flight
 
 }
 
@@ -274,14 +276,14 @@ impl VulkanApp {
 		let (pipeline, pipeline_layout) = VulkanApp::create_pipeline(&device, render_pass, swapchain_req.swapchain_extent);
 		//Create the framebuffers that contain the image views for the swapchain images as attachments
 		let swapchain_framebuffers = VulkanApp::create_framebuffers(&device, render_pass, &swapchain_image_views, swapchain_req.swapchain_extent);
-		//Create the vertex buffer
-		let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &device, physical_device);
-		//Create the command pool for the graphics family
-		let command_pool = VulkanApp::create_command_pool(&device, &queue_family_indices);
-		//Create the command buffers with all the recorded commands
+		//Create the command pool for the graphics family. Also create a short lived command pool on the graphics family for one time operations
+		let (command_pool, command_pool_short) = VulkanApp::create_command_pools(&device, &queue_family_indices);
+		//Create the command buffer with all the recorded commands
 		let command_buffers = VulkanApp::create_command_buffer(&device, command_pool);
+		//Create the vertex buffer
+		let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &device, physical_device, command_pool_short, graphics_queue);
 		//Create all the stuff needed to synchronize the draw
-		let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = VulkanApp::create_sync_objects(&device);
+		let (image_available_semaphore, render_finished_semaphore, in_flight_fence) = VulkanApp::create_sync_objects(&device);
 
 		//Now stick those into the VulkanApp fields to initiate everything (returns this struct)
 		VulkanApp {
@@ -307,15 +309,16 @@ impl VulkanApp {
 			pipeline,
 			pipeline_layout,
 
+			command_pool,
+			command_pool_short,
+			command_buffers,
+
 			vertex_buffer,
 			vertex_buffer_memory,
 
-			command_pool,
-			command_buffers,
-
-			image_available_semaphores,
-			render_finished_semaphores,
-			in_flight_fences,
+			image_available_semaphore,
+			render_finished_semaphore,
+			in_flight_fence,
 		}
 	}
 
@@ -1105,91 +1108,34 @@ impl VulkanApp {
 		framebuffers
 	}
 
-	//Creates a vertex buffer - will hold vertex data
-	fn create_vertex_buffer(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice) -> (vk::Buffer, vk::DeviceMemory) {
-		//Buffer creation info
-		let buffer_info = vk::BufferCreateInfo {
-			s_type: vk::StructureType::BUFFER_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::BufferCreateFlags::empty(), //There's some flags to make it a sparce resource - don't need them
-			size: core::mem::size_of_val(&TEST_TRIANGLE_VERTICES) as u64, //Size of all the vertex data
-			usage: vk::BufferUsageFlags::VERTEX_BUFFER, //Buffer usage. This will be a vertex buffer
-			sharing_mode: vk::SharingMode::EXCLUSIVE, //Doesn't need to be shared - will only be used by the graphics queue
-			queue_family_index_count: 0, //Ignored if sharing mode is exclusive
-			p_queue_family_indices: ptr::null(), //Ignored if sharing mode is exclusive
-			..Default::default()
-		};
-
-		//Create the vertex buffer
-		let vertex_buffer = unsafe { device.create_buffer(&buffer_info, None).expect("Failed to create vertex buffer") };
-
-		//Get that buffer's memory requirements - required size may differ from the size specified during buffer creation
-		let buffer_memory_requirements = unsafe { device.get_buffer_memory_requirements(vertex_buffer) };
-
-		//Need to find the right type of GPU memory to use - first, setup the required memory flags for memory types that are both host visible and host coherent
-		let required_memory_flags = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-		//Then query the GPU using "find_memory_type_index"
-		let memory_type_index = VulkanApp::find_memory_type_index(instance, physical_device, buffer_memory_requirements.memory_type_bits, required_memory_flags);
-
-		//After getting the appropriate memory type index, can fill out memory allocation info
-		let memory_allocate_info = vk::MemoryAllocateInfo {
-			s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
-			p_next: ptr::null(),
-			allocation_size: buffer_memory_requirements.size,
-			memory_type_index: memory_type_index,
-			..Default::default()
-		};
-
-		//Allocate the memory
-		let vertex_buffer_memory = unsafe { device.allocate_memory(&memory_allocate_info, None).expect("Failed to allocate device memory") };
-
-		//Associate the allocated memory to the buffer by binding it - no offset, since the memory is specifically allocated for this buffer
-		unsafe { device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).expect("Failed to bind buffer memory") };
-
-		//Have to fill the vertex buffer - map buffer memory into CPU accessible memory
-		//This gives a pointer to a region of mappable memory
-		let p_mappable = unsafe { device.map_memory(vertex_buffer_memory, 0, buffer_info.size, vk::MemoryMapFlags::empty()).expect("Failed to map device memory") as *mut Vertex};
-		//Copy the data into that mappable memory - rust equivalent of "memcpy"
-		unsafe { ptr::copy_nonoverlapping(TEST_TRIANGLE_VERTICES.as_ptr(), p_mappable, TEST_TRIANGLE_VERTICES.len()) };
-		//Unmap the memory. Typically we can't guarantee the order, and would have to use "vkFlushMappedMemoryRanges" and "vkInvalidateMappedMemoryRanges"
-		//The memory was chosen to be host coherent with "vk::MemoryPropertyFlags::HOST_COHERENT" so they aren' needed
-		unsafe { device.unmap_memory(vertex_buffer_memory) };
-
-		//Return the vertex buffer as well as its memory to be freed later
-		(vertex_buffer, vertex_buffer_memory)
-	}
-
-	//Finds the right type of GPU memory for whatever we want to do, return the index for that memory type
-	//Chooses based on memory types. Doesn't worry about the specific memory heap at the moment
-	fn find_memory_type_index(instance: &ash::Instance, physical_device: vk::PhysicalDevice, type_filter: u32, required_properties: vk::MemoryPropertyFlags) -> u32 {
-		//Query for available types of memory
-		//This will give a "VkPhysicalDeviceMemoryProperties" with the available memory types and heaps
-		let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-		//Loop through the memory types, check against the type filter, also check that it's suitable
-		for (memory_index, memory_type) in memory_properties.memory_types.iter().enumerate() {
-			let memory_type_bits = 1 << memory_index; //Memory type bits contains a bit set for every supported memory type for the resource, corresponding to the memory index i
-			
-			//Check to make sure the memory type bits are the desired ones from the type filter, and also it has at least the required properties
-			//Basically, checking that it satisfies the buffer requirements and the physical device requirements
-			if (type_filter & memory_type_bits) > 0 && (memory_type.property_flags & required_properties) == required_properties {
-				return memory_index as u32
-			}
-		}
-		panic!("Failed to find suitable memory type");
-	}
-
 	//Creates a command pool - used to manage memory for command buffers
-	fn create_command_pool(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> vk::CommandPool {
+	fn create_command_pools(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> (vk::CommandPool, vk::CommandPool) {
 		let command_pool_info = vk::CommandPoolCreateInfo {
 			s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
 			p_next: ptr::null(),
-			flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER, //Want to be able to reset the command pool individually (will happen every frame)
+			flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER, //Want to be able to reset the command buffers individually (will happen every frame in this app with "vkResetCommandBuffer")
 			queue_family_index: queue_family_indices.graphics_family.unwrap(), //Want to submit commands for drawing to a command buffer on the graphics queue
 			..Default::default()
 		};
 
 		//Create the command pool
-		unsafe { device.create_command_pool(&command_pool_info, None).expect("Failed to create command pool") }
+		let command_pool = unsafe { device.create_command_pool(&command_pool_info, None).expect("Failed to create command pool") };
+
+		//Create a second command pool with the transient bit set - will only create short lived command buffers
+		//Will be used for transfer operations, but uses the graphics queue family - graphics family is guaranteed to support transfer by spec
+		//Transfer is really only relevant when working with multiple CPU threads
+		let command_pool_info = vk::CommandPoolCreateInfo {
+			s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::CommandPoolCreateFlags::TRANSIENT, //Command buffers will be short lived. Driver might optimize for that if it sees this flag
+			queue_family_index: queue_family_indices.graphics_family.unwrap(), //This is going to be used for 
+			..Default::default()
+		};
+
+		//Create the command pool
+		let command_pool_short = unsafe { device.create_command_pool(&command_pool_info, None).expect("Failed to create command pool") };
+
+		(command_pool, command_pool_short)
 	}
 
 	//Allocates and creates command buffers for commands to be submitted to
@@ -1209,6 +1155,45 @@ impl VulkanApp {
 
 		//Allocate and return the command buffer
 		unsafe { device.allocate_command_buffers(&command_buffer_info).expect("Failed to allocate command buffers") }
+	}
+
+	//Creates a vertex buffer - will hold vertex data
+	//Uses a staging buffer that is host visible and host coherent. Then, will transfer that to device local memory (faster)
+	fn create_vertex_buffer(instance: &ash::Instance, device: &ash::Device, physical_device: vk::PhysicalDevice, command_pool: vk::CommandPool, submit_queue: vk::Queue) -> (vk::Buffer, vk::DeviceMemory) {
+		//Setup size + usage for the vertex buffer
+		let buffer_size = core::mem::size_of_val(&TEST_TRIANGLE_VERTICES) as u64;
+		let staging_buffer_usage = vk::BufferUsageFlags::TRANSFER_SRC; //Staging buffer will end up transferring to the vertex buffer
+		//If host coherent, "vkFlushMappedMemoryRanges" and "vkInvalidateMappedMemoryRanges" aren't needed during memory mapping, but it's slower
+		let staging_required_memory_properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+		
+		//Create the staging buffer
+		let (staging_buffer, staging_buffer_memory) = create_buffer(instance, device, physical_device, buffer_size, staging_buffer_usage, staging_required_memory_properties);
+
+		//Have to fill the vertex buffer - map buffer memory into CPU accessible memory
+		//This gives a pointer to a region of mappable memory
+		let p_mappable = unsafe { device.map_memory(staging_buffer_memory, 0, buffer_size, vk::MemoryMapFlags::empty()).expect("Failed to map device memory") as *mut Vertex};
+		//Copy the data into that mappable memory - rust equivalent of "memcpy"
+		unsafe { ptr::copy_nonoverlapping(TEST_TRIANGLE_VERTICES.as_ptr(), p_mappable, TEST_TRIANGLE_VERTICES.len()) };
+		//Unmap the memory. Typically we can't guarantee the order, and would have to use "vkFlushMappedMemoryRanges" and "vkInvalidateMappedMemoryRanges"
+		//The memory was chosen to be host coherent with "vk::MemoryPropertyFlags::HOST_COHERENT" so those aren't needed
+		unsafe { device.unmap_memory(staging_buffer_memory) };
+
+		//Now create the vertex buffer
+		let vertex_buffer_usage = vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER; //Want both the transfer destination bit the and vertex buffer bit
+		let vertex_required_memory_properties = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+
+		let (vertex_buffer, vertex_buffer_memory) = create_buffer(instance, device, physical_device, buffer_size, vertex_buffer_usage, vertex_required_memory_properties);
+
+		//Copy the staging buffer into the vertex buffer
+		//Pass in graphics queue, since that's required to support transfer by spec. Could find a separate queue for transfer operations, but this is really only a concern when multithreading transfers
+		copy_buffer(device, command_pool, submit_queue, staging_buffer, vertex_buffer, buffer_size);
+
+		//Can get rid of the staging buffers now
+		unsafe { device.destroy_buffer(staging_buffer, None) };
+		unsafe { device.free_memory(staging_buffer_memory, None) };
+
+		//Return the vertex buffer as well as its memory to be freed later
+		(vertex_buffer, vertex_buffer_memory)
 	}
 
 	//Will record during frame draw
@@ -1261,7 +1246,7 @@ impl VulkanApp {
 
 		//Bind the vertex buffer
 		let vertex_buffers = [vertex_buffer];
-		let offsets = [0 as u64];
+		let offsets = [0];
 		unsafe { device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets) };
 
 		//Setup the viewport
@@ -1312,12 +1297,12 @@ impl VulkanApp {
 		};
 
 		//Create semaphores + fences
-		let image_available_semaphores = unsafe { device.create_semaphore(&semaphore_info, None).expect("Failed to create semaphore") };
-		let render_finished_semaphores = unsafe { device.create_semaphore(&semaphore_info, None).expect("Failed to create semaphore") };
-		let in_flight_fences = unsafe { device.create_fence(&fence_info, None).expect("Failed to create fence") };
+		let image_available_semaphore = unsafe { device.create_semaphore(&semaphore_info, None).expect("Failed to create semaphore") };
+		let render_finished_semaphore = unsafe { device.create_semaphore(&semaphore_info, None).expect("Failed to create semaphore") };
+		let in_flight_fence = unsafe { device.create_fence(&fence_info, None).expect("Failed to create fence") };
 
 		//Return the semaphores + fences in a tuple
-		(image_available_semaphores, render_finished_semaphores, in_flight_fences)
+		(image_available_semaphore, render_finished_semaphore, in_flight_fence)
 	}
 
 	//A little note - all of the above functions didn't use "self" because they were to be called in "init_vulkan." These next ones aren't, and pertain to when the event loop is running
@@ -1333,14 +1318,14 @@ impl VulkanApp {
 		}
 
 		//Just have on frame in flight
-		let current_frame_fence_array = [self.in_flight_fences];
+		let current_frame_fence_array = [self.in_flight_fence];
 
 		//Only waiting for the fence for the current frame. With one frame in flight, this is all there is
 		unsafe { self.device.wait_for_fences(&current_frame_fence_array, true, std::u64::MAX).expect("Failed to wait for fence") }; //No timeout, set as the max u64
 
 		//Acquire next image from swapchain
 		//The command buffer will be queued on this image index, so will need to use the appropriate command buffer
-		let (image_index, is_suboptimal) = match unsafe { self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.image_available_semaphores, vk::Fence::null())} {
+		let (image_index, is_suboptimal) = match unsafe { self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.image_available_semaphore, vk::Fence::null())} {
 			Ok((image_index, is_suboptimal)) => (image_index, is_suboptimal),
 			Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return, //If the swapchain image is out of date, return out of this function without drawing the frame
 			_ => panic!("Failed to acquire next swapchain image")
@@ -1357,10 +1342,10 @@ impl VulkanApp {
 		//Setup semaphores into arrays to deal with queue submission
 		//Want to wait at the color attachment output stage - don't want to output any colors until the image to write to becomes available
 		//This allows vertex shader to be run while still waiting for a swapchain image
-		let wait_available_array = [self.image_available_semaphores];
+		let wait_available_array = [self.image_available_semaphore];
 		let wait_pipeline_stage = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 		//This will be the semaphore to signal when the command buffers finish executing
-		let signal_finished_array = [self.render_finished_semaphores];
+		let signal_finished_array = [self.render_finished_semaphore];
 
 		//Info for command buffer to be submitted to the queue
 		let submit_infos = [vk::SubmitInfo {
@@ -1378,7 +1363,7 @@ impl VulkanApp {
 
 		//Submit command buffer to queue
 		//Signals fence once the command buffers complete execution - can then reuse the command buffer
-		unsafe {self.device.queue_submit(self.graphics_queue, &submit_infos, self.in_flight_fences).expect("Failed to submit command buffer to queue") };
+		unsafe {self.device.queue_submit(self.graphics_queue, &submit_infos, self.in_flight_fence).expect("Failed to submit command buffer to queue") };
 
 		//Need an array of the swapchains for the present info
 		let swapchains_array = [self.swapchain];
@@ -1406,6 +1391,7 @@ impl VulkanApp {
 	}
 
 	//Wait until idle - will need to call from apphandler when close is requested to make sure drawing/presenting options aren't happening
+	//This should ONLY be used when things need to be destroyed
 	pub fn wait_idle(&self) {
 		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
 	}
@@ -1469,14 +1455,15 @@ impl VulkanApp {
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
 		unsafe {
-			self.device.destroy_semaphore(self.image_available_semaphores, None);
-			self.device.destroy_semaphore(self.render_finished_semaphores, None);
-			self.device.destroy_fence(self.in_flight_fences, None);
+			self.device.destroy_semaphore(self.image_available_semaphore, None);
+			self.device.destroy_semaphore(self.render_finished_semaphore, None);
+			self.device.destroy_fence(self.in_flight_fence, None);
 
 			self.device.destroy_buffer(self.vertex_buffer, None);
 			self.device.free_memory(self.vertex_buffer_memory, None);
 
 			self.device.destroy_command_pool(self.command_pool, None);
+			self.device.destroy_command_pool(self.command_pool_short, None);
 			for framebuffer in &self.swapchain_framebuffers {
 				self.device.destroy_framebuffer(*framebuffer, None);
 			}
