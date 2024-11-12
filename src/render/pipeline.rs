@@ -1,16 +1,17 @@
 use crate::render::constants::*;
 use crate::render::memory::{create_buffer, copy_buffer};
-use crate::utility::read::{fragment_shader, vertex_shader};
 use crate::render::Vertex;
-use crate::render::TEST_TRIANGLE_VERTICES;
+use crate::scene::{Scene, TEST_TRIANGLE_VERTICES};
+use crate::utility::read::{fragment_shader, vertex_shader};
 
+use std::ptr;
+use std::ffi::{CString, CStr};
 use ash::{vk, khr, Entry};
 use winit::{
 	window::{Window},
 	raw_window_handle::{HasWindowHandle, RawWindowHandle},
 };
-use std::ffi::{CString, CStr};
-use std::ptr;
+
 
 //Extensions, can add more here if need be (these are instance extensions, not device extensions)
 //vkEnumerateInstanceExtensionProperties checks which extensions are available in the vulkan implementation (on my computer)
@@ -914,7 +915,7 @@ impl VulkanApp {
 			rasterizer_discard_enable: vk::FALSE, //Discards triangles before rasterizing. Disables output to framebuffer basically
 			polygon_mode: vk::PolygonMode::FILL, //Can do wireframe or whatever
 			line_width: 1.0, //Any line thicker than 1.0 will require GPU feature
-			cull_mode: vk::CullModeFlags::BACK, //Cull the back facing triangles only
+			cull_mode: vk::CullModeFlags::NONE, //Cull the back facing triangles only
 			front_face: vk::FrontFace::COUNTER_CLOCKWISE, //Defines triangle winding convention used for face culling
 			depth_bias_enable: vk::FALSE, //Bias on all the depth values. I guess it can be used for shadow maps or something
 			depth_bias_constant_factor: 0.0,
@@ -1003,16 +1004,27 @@ impl VulkanApp {
 			p_dynamic_states: dynamic_states.as_ptr(),
 			..Default::default()
 		};
+		
+		//Setup shader push constants to be used in pipeline layouts
+		//Push constants are mega-small (~128 bytes at minimum, so 2 glam::f32::Mat4s), but are very fast, and are updated via commands rather than memory/copy commands
+		//I'm using them over a uniform buffer because I'm recording commands each frame anyway, so these will slot in nicely
+		//Just want to push view + projection matrix for now - will only be used in the vertex bit
+		let push_constant_ranges = [vk::PushConstantRange {		
+			stage_flags: vk::ShaderStageFlags::VERTEX,
+			offset: 0,
+			size: core::mem::size_of::<glam::f32::Mat4>() as u32,
+		}];
 
 		//Pipeline layout - describes resources that can be accessed by a pipeline (descriptor sets)
+		//Use push constants for transformation matrices rather than uniform buffers - recording 
 		let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
 			s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineLayoutCreateFlags::empty(),
 			set_layout_count: 0, //Number of descriptor sets in pipeline layout
 			p_set_layouts: ptr::null(), //Pointer to descriptor set layouts
-			push_constant_range_count: 0, //Number of push constants in pipeline layout
-			p_push_constant_ranges: ptr::null(), //Pointer to push constants layouts
+			push_constant_range_count: push_constant_ranges.len() as u32, //Number of push constants in pipeline layout
+			p_push_constant_ranges: push_constant_ranges.as_ptr(), //Pointer to push constants layouts
 			..Default::default()
 		};
 
@@ -1196,90 +1208,6 @@ impl VulkanApp {
 		(vertex_buffer, vertex_buffer_memory)
 	}
 
-	//Will record during frame draw
-	//When only frame is in flight, it's probably faster to reuse one command buffer and just rerecord it for the appropiate swapchain image
-	//Frames in flight are only there to give CPU something to do while GPU chugs away, but they increase lag by letting the CPU game physics go farther ahead than the rendering
-	fn record_command_buffer(device: &ash::Device, command_buffer: vk::CommandBuffer, render_pass: vk::RenderPass, pipeline: vk::Pipeline, framebuffer: vk::Framebuffer, vertex_buffer: vk::Buffer, window_width: u32, window_height: u32) {
-		//Start with the command buffer begin info
-		let command_buffer_begin_info = vk::CommandBufferBeginInfo {
-			s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-			p_next: ptr::null(),
-			flags: vk::CommandBufferUsageFlags::empty(), //Flags for rerecording, resubmitting, and if it's a secondary command buffer. None needed here
-			p_inheritance_info: ptr::null(), //Inheritance info for secondary command buffers
-			..Default::default()
-		};
-
-		//Begin recording to the command buffer
-		//Remember - the commands submitted to the buffer will NOT necessarily go in order
-		unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info).expect("Failed to begin recording to command buffer") };
-
-		//Set the values to clear to, this will be passed to "render_pass_begin_info"
-		//An array containing clear values for each framebufffer attachment that has a loap_op (as defined in the render pass) with clearing
-		//This is a rust union, so it's defined using one field
-		let clear_values = [vk::ClearValue {
-			color: vk::ClearColorValue {float32: [0.0, 0.0, 0.0, 1.0]}, //Black at 100% opacity
-		}];
-
-		//Render pass begin info
-		let render_pass_begin_info = vk::RenderPassBeginInfo {
-			s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
-			p_next: ptr::null(),
-			render_pass, //The render pass to begin an instance of
-			framebuffer, //The framebuffer containing the attachments to use in the render pass
-			render_area: vk::Rect2D { //Render area being affected by the render pass instance
-				offset: vk::Offset2D {x: 0, y: 0},
-				extent: vk::Extent2D {width: window_width, height: window_height}, //Will be different if window is resized
-			},
-			clear_value_count: clear_values.len() as u32,
-			p_clear_values: clear_values.as_ptr(),
-			..Default::default()
-		};
-
-		//Command to begin the render pass
-		//There's a begin_render_pass2, but it only adds a s_type and p_next to the SubpassContents
-		unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) }; //Inline: subpass commands will be in primary command buffer, no secondary command buffers
-
-		//Bind the pipeline to the render pass
-		//Pipeline bind point is graphics - not using compute
-		//Dynamic states would be set here, if they were set up in "create_pipeline" fn
-		unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline) }; //Specified as graphics pipeline, same as specification in render pass subpass
-
-		//Bind the vertex buffer
-		let vertex_buffers = [vertex_buffer];
-		let offsets = [0];
-		unsafe { device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets) };
-
-		//Setup the viewport
-		let viewports = [vk::Viewport {
-			x: 0.0, //Top left
-			y: 0.0, //Top left
-			width: window_width as f32, //Window width
-			height: window_height as f32, //Window height
-			min_depth: 0.0, //Just keep standard depths
-			max_depth: 1.0
-		}];
-		//Set viewport
-		unsafe { device.cmd_set_viewport(command_buffer, 0, &viewports); }
-
-		//Setup the scissors to be used with the viewport 
-		let scissors = [vk::Rect2D {
-			offset: vk::Offset2D {x: 0, y: 0}, //No offset
-			extent: vk::Extent2D {width: window_width, height: window_height} //Will change based on window size
-		}];
-		//Set the scissors
-		unsafe { device.cmd_set_scissor(command_buffer, 0, &scissors); }
-
-
-		//Draw command
-		unsafe { device.cmd_draw(command_buffer, TEST_TRIANGLE_VERTICES.len() as u32, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
-
-		//Command to end the render pass
-		unsafe { device.cmd_end_render_pass(command_buffer)};
-
-		//End command buffer recording
-		unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
-	}
-
 	//Create synchronization objects to deal with frames in flight + swapchain sync stuff
 	fn create_sync_objects(device: &ash::Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
 		let semaphore_info = vk::SemaphoreCreateInfo {
@@ -1308,9 +1236,9 @@ impl VulkanApp {
 	//A little note - all of the above functions didn't use "self" because they were to be called in "init_vulkan." These next ones aren't, and pertain to when the event loop is running
 
 	//Draw a frame to the surface
-	//Because of how this is synchronized, this will draw one frame in parallel with the beginning of the next frame (beginning = up until swapchain framebuffer acquisition)
-	//Need to pass in the window to get width/height
-	pub fn draw_frame(&self, window: &Window) {
+	//Because of how this is synchronized, this will draw start drawing the frame, then get the swapchain image, then finish drawing the frame to that swapchain image
+	//Need to pass in the window to get width/height, need to pass scene info
+	pub fn draw_frame(&self, window: &Window, scene: &Scene) {
 		//If the window is size 0, don't even deal with it
 		//Running into too many problems with keeping the command buffer extent + framebuffer extent + swapchain extent gucchi. Maybe a later solution will be
 		if window.inner_size().width == 0 || window.inner_size().height == 0 {
@@ -1333,7 +1261,7 @@ impl VulkanApp {
 
 		//Need the window's width and height to record the command buffer
 		unsafe { self.device.reset_command_buffer(self.command_buffers[0], vk::CommandBufferResetFlags::empty()).expect("Failed to reset command buffer"); } //Reset
-		VulkanApp::record_command_buffer(&self.device, self.command_buffers[0], self.render_pass, self.pipeline, self.swapchain_framebuffers[image_index as usize], self.vertex_buffer, window.inner_size().width, window.inner_size().height); //Record
+		self.record_command_buffer(window, scene, image_index as usize); //Record into the command buffers
 		
 		//After waiting, have to reset the fence
 		//Delay resetting fence until we know acquire_next_image succeeded, in case of any weird behavior with resizing
@@ -1389,6 +1317,107 @@ impl VulkanApp {
 			_ => panic!("Failed to execute queue present")
 		}
 	}
+
+	//Will record during frame draw
+	//When only frame is in flight, it's probably faster to reuse one command buffer and just rerecord it for the appropiate swapchain image
+	//Frames in flight are only there to give CPU something to do while GPU chugs away, but they increase lag by letting the CPU game physics go farther ahead than the rendering
+	fn record_command_buffer(&self, window: &Window, scene: &Scene, image_index: usize) {
+		//First, setup everything needed with in VulkanApp (there's a bunch)
+		let device = &self.device;
+		let command_buffer = self.command_buffers[0];
+		let render_pass = self.render_pass;
+		let pipeline = self.pipeline;
+		let pipeline_layout = self.pipeline_layout;
+		let framebuffer = self.swapchain_framebuffers[image_index];
+		let vertex_buffer = self.vertex_buffer;
+		let window_width = window.inner_size().width;
+		let window_height = window.inner_size().height;
+
+		//Start with the command buffer begin info
+		let command_buffer_begin_info = vk::CommandBufferBeginInfo {
+			s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+			p_next: ptr::null(),
+			flags: vk::CommandBufferUsageFlags::empty(), //Flags for rerecording, resubmitting, and if it's a secondary command buffer. None needed here
+			p_inheritance_info: ptr::null(), //Inheritance info for secondary command buffers
+			..Default::default()
+		};
+
+		//Begin recording to the command buffer
+		//Remember - the commands submitted to the buffer will NOT necessarily go in order
+		unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info).expect("Failed to begin recording to command buffer") };
+
+		//Set the values to clear to, this will be passed to "render_pass_begin_info"
+		//An array containing clear values for each framebufffer attachment that has a loap_op (as defined in the render pass) with clearing
+		//This is a rust union, so it's defined using one field
+		let clear_values = [vk::ClearValue {
+			color: vk::ClearColorValue {float32: [0.0, 0.0, 0.0, 1.0]}, //Black at 100% opacity
+		}];
+
+		//Render pass begin info
+		let render_pass_begin_info = vk::RenderPassBeginInfo {
+			s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+			p_next: ptr::null(),
+			render_pass, //The render pass to begin an instance of
+			framebuffer, //The framebuffer containing the attachments to use in the render pass
+			render_area: vk::Rect2D { //Render area being affected by the render pass instance
+				offset: vk::Offset2D {x: 0, y: 0},
+				extent: vk::Extent2D {width: window_width, height: window_height}, //Will be different if window is resized
+			},
+			clear_value_count: clear_values.len() as u32,
+			p_clear_values: clear_values.as_ptr(),
+			..Default::default()
+		};
+
+		//Command to begin the render pass
+		//There's a begin_render_pass2, but it only adds a s_type and p_next to the SubpassContents
+		unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) }; //Inline: subpass commands will be in primary command buffer, no secondary command buffers
+
+		//Bind the pipeline to the render pass
+		//Pipeline bind point is graphics - not using compute
+		//Dynamic states would be set here, if they were set up in "create_pipeline" fn
+		unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline) }; //Specified as graphics pipeline, same as specification in render pass subpass
+
+		//Bind the vertex buffer
+		let vertex_buffers = [vertex_buffer];
+		let offsets = [0];
+		unsafe { device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets) };
+
+		//Calculate the matrix to push to the shaders
+		//Need to make sure alignment rules are held to - since this is just a single Mat4 of 128 bytes
+		let render_matrix_bytes = scene.render_matrix_bytes();
+		//Push the matrix as a push constant
+		unsafe { device.cmd_push_constants(command_buffer, pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, &render_matrix_bytes) };
+
+		//Setup the viewport
+		let viewports = [vk::Viewport {
+			x: 0.0, //Top left
+			y: 0.0, //Top left
+			width: window_width as f32, //Window width
+			height: window_height as f32, //Window height
+			min_depth: 0.0, //Just keep standard depths
+			max_depth: 1.0
+		}];
+		//Set viewport
+		unsafe { device.cmd_set_viewport(command_buffer, 0, &viewports); }
+
+		//Setup the scissors to be used with the viewport 
+		let scissors = [vk::Rect2D {
+			offset: vk::Offset2D {x: 0, y: 0}, //No offset
+			extent: vk::Extent2D {width: window_width, height: window_height} //Will change based on window size
+		}];
+		//Set the scissors
+		unsafe { device.cmd_set_scissor(command_buffer, 0, &scissors); }
+
+		//Draw command
+		unsafe { device.cmd_draw(command_buffer, TEST_TRIANGLE_VERTICES.len() as u32, 1, 0, 0) }; //Specify number of vertices, number of instances, vertex offset, instance offset
+
+		//Command to end the render pass
+		unsafe { device.cmd_end_render_pass(command_buffer)};
+
+		//End command buffer recording
+		unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
+	}
+
 
 	//Wait until idle - will need to call from apphandler when close is requested to make sure drawing/presenting options aren't happening
 	//This should ONLY be used when things need to be destroyed

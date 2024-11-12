@@ -1,7 +1,12 @@
 use crate::render::constants::*;
 use crate::render::pipeline;
+use crate::scene::Scene;
 use crate::utility::read::{icon_asset};
 
+use std::{
+    thread::sleep,
+    time::{Duration, Instant}
+};
 use winit::{
 	application::ApplicationHandler,
 	event::{WindowEvent, DeviceEvent, DeviceId, ElementState},
@@ -14,7 +19,8 @@ use winit::{
 //This will mostly work with winit as an app handler
 pub struct VulkanAppHandler {
 	window: Option<Window>, //Winit window that gets rendered to
-	vulkan_app: Option<pipeline::VulkanApp> //VulkanApp
+	vulkan_app: Option<pipeline::VulkanApp>, //VulkanApp
+	scene: Scene, //The scene containing all the fun stuff
 }
 
 impl VulkanAppHandler {
@@ -22,8 +28,27 @@ impl VulkanAppHandler {
 	pub fn init() -> VulkanAppHandler {
 		VulkanAppHandler {
 			window: None,
-			vulkan_app: None
+			vulkan_app: None,
+			scene: Scene::init_scene(),
 		}
+	}
+
+	//Game loop - called on redraw request in "window_event" fn
+	fn game_loop(vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &Scene) {
+		//Get the initial time
+		let initial_time = Instant::now();
+
+		//Acquire a swapchain image, render to it, then present it from the swapchain
+		vulkan_app.draw_frame(window, scene);
+
+		//Right now, just sleep for a little bit
+		sleep(Duration::from_millis(10));
+
+		//Check the elapsed time
+		let elapsed_time = initial_time.elapsed();
+
+		//Request a redraw for next frame
+		window.request_redraw();
 	}
 
 	//A big match statement for the controls, to be called on a key press event
@@ -48,10 +73,12 @@ impl VulkanAppHandler {
 
 	//Need to do mouse controls separately as a "device event"
 	//Raw mouse input stuff
-	fn mouse_controls() {
-
+	fn mouse_controls(&mut self, event: DeviceEvent) {
+		match event {
+			DeviceEvent::MouseMotion{delta} => (), //println!("Mouse moved {:?}, {:?}", delta.0, delta.1),
+			_ => ()
+		}
 	}
-
 
 	//What to do when closing the app
 	//Have to wait 
@@ -97,11 +124,8 @@ impl ApplicationHandler for VulkanAppHandler {
 				let vulkan_app = self.vulkan_app.as_ref().unwrap();
 				let window = self.window.as_ref().unwrap();
 
-				vulkan_app.draw_frame(window);
-
-				//Request a redraw again for next frame
-				//There's probably a much better way to do a main game loop, but this is okay for now
-				window.request_redraw();
+				//This will request a redraw after drawing a frame
+				VulkanAppHandler::game_loop(vulkan_app, window, &self.scene);
 			},
 
 			//Event when key is pressed
@@ -139,6 +163,6 @@ impl ApplicationHandler for VulkanAppHandler {
 
 	//Handle mouse movement here
 	fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
-
+		self.mouse_controls(event)
 	}
 }

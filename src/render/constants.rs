@@ -2,7 +2,7 @@ use ash::vk;
 use std::ffi::CStr;
 
 //Consts for window creation
-pub const WINDOW_TITLE: &str = "peepee poopoo";
+pub const WINDOW_TITLE: &str = "Jarmungular Engine";
 pub const WINDOW_WIDTH: u32 = 1280;
 pub const WINDOW_HEIGHT: u32 = 720;
 

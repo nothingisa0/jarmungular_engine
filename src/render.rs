@@ -4,11 +4,11 @@ pub mod memory;
 pub mod constants;
 
 use ash::vk;
-use glam::f32::{vec3, Vec3, vec4, Vec4};
+use glam::f32::{Vec3, Vec4};
 
 pub struct Vertex {
-	pos: Vec4,
-	color: Vec3,
+	pub pos: Vec4,
+	pub color: Vec3,
 }
 
 impl Vertex {
@@ -52,12 +52,3 @@ impl Vertex {
 		]
 	}
 }
-
-
-
-//Make the vertices for a test triangle
-pub const TEST_TRIANGLE_VERTICES: [Vertex; 3] = [
-	Vertex {pos: vec4( 0.0, -0.5,  0.0,  1.0), color: vec3(1.0, 0.0, 0.0)},
-	Vertex {pos: vec4(-0.5,  0.5,  0.0,  1.0), color: vec3(0.0, 1.0, 0.0)},
-	Vertex {pos: vec4( 0.5,  0.5,  0.0,  1.0), color: vec3(0.0, 0.0, 1.0)},
-];

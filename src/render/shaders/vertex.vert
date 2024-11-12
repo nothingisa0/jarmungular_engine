@@ -13,10 +13,15 @@ layout(location = 1) in vec3 inColor;
 //layout(location = 0) specifies framebuffer index
 layout(location = 0) out vec3 fragColor;
 
+//Push constants
+layout(push_constant) uniform constants {
+    mat4 render_matrix;
+} PushConstants;
+
 //Main function is called for every vertex
 void main() {
 	//Sets vertex position
-	gl_Position = inPosition;
+	gl_Position = PushConstants.render_matrix * inPosition;
 	//Sets vertex color (this just is an output to pass to the fragment shader)
 	fragColor = inColor;
 }
