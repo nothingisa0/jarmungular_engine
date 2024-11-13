@@ -19,3 +19,6 @@ pub const INSTANCE_EXTENSIONS: [&CStr; 2] = [
 	vk::KHR_WIN32_SURFACE_NAME, //WINDOWS ONLY for now
 ];
 pub const DEVICE_EXTENSIONS: [&CStr; 1] = [vk::KHR_SWAPCHAIN_NAME];
+
+//Mouse sensitivity - measured in degrees per mouse increment
+pub const SENSITIVITY: f32 = 0.04;

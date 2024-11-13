@@ -9,9 +9,9 @@ use std::{
 };
 use winit::{
 	application::ApplicationHandler,
-	event::{WindowEvent, DeviceEvent, DeviceId, ElementState},
+	event::{WindowEvent, DeviceEvent, DeviceId, ElementState, MouseButton},
 	event_loop::{ActiveEventLoop},
-	window::{Window, WindowId},
+	window::{Window, WindowId, CursorGrabMode},
 	keyboard::{Key, NamedKey},
 	platform::modifier_supplement::KeyEventExtModifierSupplement,
 };
@@ -56,28 +56,48 @@ impl VulkanAppHandler {
 	//Match things as a tuple of the key and its press/release state. Later, might also want to pass in something like a character state (grounded, jumpsquat, etc), idk
 	//Not sure how this would handle something like a "sprint key." I think it would have to turn on/off a "sprint" player state on press/release, and the sprint state would change the behavior of other controls (eg walk -> run)
 	//Some people store the key states in a hash set, but I don't think that's necessary in a game context
-	fn controls(&self, event_loop: &ActiveEventLoop, key: &Key, key_state: ElementState) {
-		//Matching both the key
+	fn keyboard_controls(&self, event_loop: &ActiveEventLoop, key: &Key, key_state: ElementState) {
+		//Matching both the key and the state
 		match (key.as_ref(), key_state) {
+			//Test key r
 			(Key::Character("r"), ElementState::Pressed) => {
 				println!("r key pressed");
 			},
+
 			//Esc key. Again, the winit example does it fancier with just setting a bool, then checks that bool later
 			(Key::Named(NamedKey::Escape), ElementState::Pressed) => {
 				println!("The esc button was pressed; stopping");
 				self.close_app(event_loop);
 			},
+
 			_ => (),
 		}
 	}
 
-	//Need to do mouse controls separately as a "device event"
-	//Raw mouse input stuff
-	fn mouse_controls(&mut self, event: DeviceEvent) {
-		match event {
-			DeviceEvent::MouseMotion{delta} => (), //println!("Mouse moved {:?}, {:?}", delta.0, delta.1),
+	//Mouse button press
+	fn mouse_controls(&self, window: &Window, button: MouseButton) {
+		//Matching the mouse button pressed
+		match button {
+			MouseButton::Right => {
+				window.set_cursor_visible(true);
+				window.set_cursor_grab(CursorGrabMode::None).expect("Failed to set cursor mode");
+			}
 			_ => ()
-		}
+		};
+	}
+
+
+
+
+
+	//Need to do mouse movement separately as a "device event"
+	//Raw mouse input stuff
+	fn mouse_movement(&mut self, event: DeviceEvent) {
+		let window = self.window.as_ref().unwrap();
+		let camera = &mut self.scene.camera;
+
+		//Mouse movement will move the camera
+		if let DeviceEvent::MouseMotion{delta} = event {camera.rotate_view(delta.0 as f32, -delta.1 as f32)};
 	}
 
 	//What to do when closing the app
@@ -100,6 +120,10 @@ impl ApplicationHandler for VulkanAppHandler {
 			.with_window_icon(Some(icon_asset()));
 
 		let window = event_loop.create_window(window_attributes).expect("Failed to create window");
+		
+		//Set cursor to be hidden and locked within the window
+		window.set_cursor_visible(false);
+		window.set_cursor_grab(CursorGrabMode::Confined).expect("Failed to set cursor mode");
 
 		//Then set up the vulkan app
 		let vulkan_app = pipeline::VulkanApp::init_vulkan(&window);
@@ -137,7 +161,12 @@ impl ApplicationHandler for VulkanAppHandler {
 				let key_state = event.state;
 				//As long as it's not a repeated key, go into the "controls" fn
 				//This was done before in the match statement using "{event: KeyEvent {logical_key: key, state, repeat: false, .. }, ..}" but that broke the key_without_modifiers
-				if !event.repeat {self.controls(event_loop, &key, key_state);};
+				if !event.repeat {self.keyboard_controls(event_loop, &key, key_state);};
+			},
+
+			WindowEvent::MouseInput {button, ..} => {
+				let window = self.window.as_ref().unwrap();
+				self.mouse_controls(window, button);
 			},
 
 			//Called when window is resized
@@ -163,6 +192,6 @@ impl ApplicationHandler for VulkanAppHandler {
 
 	//Handle mouse movement here
 	fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
-		self.mouse_controls(event)
+		self.mouse_movement(event)
 	}
 }

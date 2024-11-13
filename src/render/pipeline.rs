@@ -915,7 +915,7 @@ impl VulkanApp {
 			rasterizer_discard_enable: vk::FALSE, //Discards triangles before rasterizing. Disables output to framebuffer basically
 			polygon_mode: vk::PolygonMode::FILL, //Can do wireframe or whatever
 			line_width: 1.0, //Any line thicker than 1.0 will require GPU feature
-			cull_mode: vk::CullModeFlags::NONE, //Cull the back facing triangles only
+			cull_mode: vk::CullModeFlags::BACK, //Cull the back facing triangles only
 			front_face: vk::FrontFace::COUNTER_CLOCKWISE, //Defines triangle winding convention used for face culling
 			depth_bias_enable: vk::FALSE, //Bias on all the depth values. I guess it can be used for shadow maps or something
 			depth_bias_constant_factor: 0.0,
