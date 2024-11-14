@@ -1,13 +1,14 @@
 //TO DO: fix physical device suitability score so it (hopefully) works on luke's computer and doesn't do the hookapp thing.
-//TO DO: device events for mouse movement
+//TO DO: better error handling
 //TO DO: use an index buffer once I start importing models
-//TO DO: camera "resize_for_window" fn 
+//TO DO: camera direction currently wraps 360 if you're looking up. Want to gimbal lock it basically
+//TO DO: camera "resize_for_window" fn
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.
 	//Maybe something like: a render pass for all the mirrors in the scene, depth/stencil prepass (for mirror stencil, might not need, depth prepass may help forward renderer), postprocessing pass, pass that renders to swapchain
 //CONSIDER: Might have to handle minimized windows better in general. It pretty much pauses presentation right now, which isn't the winit recommended solution.
-//CONSIDER: separate static and dynamic geometry. Static should be updated once at the beginning, dynamic should be updated once per frame. Right now, everything in memory manager is static - fix that
+//CONSIDER: separate static and dynamic geometry? Static should be updated once at the beginning, dynamic should be updated once per frame. Right now, everything in memory manager is static.
 
 
 //#![allow(unused_imports)]
