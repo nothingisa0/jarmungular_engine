@@ -1,4 +1,4 @@
-use crate::render::constants::*;
+use crate::constants::*;
 use crate::render::memory::{create_buffer, copy_buffer};
 use crate::render::Vertex;
 use crate::scene::{Scene, TEST_TRIANGLE_VERTICES};

@@ -1,12 +1,13 @@
 pub mod camera;
 
 use crate::scene::camera::Camera;
-use glam::f32::{vec3, vec4};
 use crate::render::Vertex;
+
+use glam::f32::{vec3, vec4};
 
 //Make the vertices for a test triangle
 pub const TEST_TRIANGLE_VERTICES: [Vertex; 3] = [
-	Vertex {pos: vec4(  0.0,  5.0,  0.0,  1.0), color: vec3(1.0, 0.0, 0.0)},
+	Vertex {pos: vec4(  0.0,100.0,  0.0,  1.0), color: vec3(1.0, 0.0, 0.0)},
 	Vertex {pos: vec4(  5.0, -5.0,  0.0,  1.0), color: vec3(0.0, 1.0, 0.0)},
 	Vertex {pos: vec4( -5.0, -5.0,  0.0,  1.0), color: vec3(0.0, 0.0, 1.0)},
 ];
@@ -19,11 +20,8 @@ pub struct Scene {
 impl Scene {
 	//Right now, doesn't really do much
 	pub fn init_scene() -> Scene {
-		//Pass in the camera pos and target
-		let mut camera = Camera::new(vec3(0.0, 0.0, 20.0), vec3(1.0, 0.0, 0.0));
-		
-		//Calculate view and projection matrices
-		camera.calc_matrices();
+		//Create the camera by passing in the camera pos and target
+		let camera = Camera::new(vec3(0.0, 0.0, 20.0), vec3(1.0, 0.0, 0.0));
 		
 		//Return the initialized scene
 		Scene {
@@ -33,7 +31,7 @@ impl Scene {
 
 	//Get the result from the camera's "render_matrix" fn
 	pub fn render_matrix_bytes(&self) -> [u8; 64] {
-		let render_matrix = self.camera.render_matrix;
+		let render_matrix = self.camera.get_render_matrix();
 
 		//This method will do it safely, but it takes longer per frame
 			// let mut render_matrix_slice: [f32; 16] = [0.0; 16];

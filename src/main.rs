@@ -3,6 +3,8 @@
 //TO DO: use an index buffer once I start importing models
 //TO DO: camera direction currently wraps 360 if you're looking up. Want to gimbal lock it basically
 //TO DO: camera "resize_for_window" fn
+//TO DO: camera orientation breaks when going towards the top, it circles around. What the freak man. Target direction is also constant, so the current method won't work woith movement.
+//	Need to change how the camera works entirely to a yaw/pitch/roll setup
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.
@@ -16,10 +18,13 @@
 #![allow(unused_variables)]
 #![windows_subsystem = "windows"] //This will disable the terminal popping up when the app is run
 
+mod constants;
 mod render;
 mod utility;
 mod scene;
-use render::handler::VulkanAppHandler;
+mod run;
+
+use run::EventHandler;
 use winit::event_loop::{EventLoop, ControlFlow};
 
 
@@ -27,6 +32,6 @@ use winit::event_loop::{EventLoop, ControlFlow};
 fn main() {
 	let event_loop = EventLoop::new().expect("Event loop creation failed");
 	event_loop.set_control_flow(ControlFlow::Poll);
-	let mut vulkan_app_handler = VulkanAppHandler::init();
+	let mut vulkan_app_handler = EventHandler::init();
 	event_loop.run_app(&mut vulkan_app_handler).expect("Failed to run app");
 }

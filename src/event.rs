@@ -1,4 +1,4 @@
-use crate::render::constants::*;
+use crate::constants::*;
 use crate::render::pipeline;
 use crate::scene::Scene;
 use crate::utility::read::{icon_asset};
@@ -17,16 +17,16 @@ use winit::{
 };
 
 //This will mostly work with winit as an app handler
-pub struct VulkanAppHandler {
+pub struct EventHandler {
 	window: Option<Window>, //Winit window that gets rendered to
 	vulkan_app: Option<pipeline::VulkanApp>, //VulkanApp
 	scene: Scene, //The scene containing all the fun stuff
 }
 
-impl VulkanAppHandler {
+impl EventHandler {
 	//Initialize empty app handler
-	pub fn init() -> VulkanAppHandler {
-		VulkanAppHandler {
+	pub fn init() -> EventHandler {
+		EventHandler {
 			window: None,
 			vulkan_app: None,
 			scene: Scene::init_scene(),
@@ -109,7 +109,7 @@ impl VulkanAppHandler {
 }
 
 //Winit stuff - application handler
-impl ApplicationHandler for VulkanAppHandler {
+impl ApplicationHandler for EventHandler {
 	//This event happens whenever the application is resumed (or when first ran)
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
 		//Setup the window attributes for the "window" field of the vulkanapp struct
@@ -149,7 +149,7 @@ impl ApplicationHandler for VulkanAppHandler {
 				let window = self.window.as_ref().unwrap();
 
 				//This will request a redraw after drawing a frame
-				VulkanAppHandler::game_loop(vulkan_app, window, &self.scene);
+				EventHandler::game_loop(vulkan_app, window, &self.scene);
 			},
 
 			//Event when key is pressed
