@@ -57,24 +57,21 @@ impl Camera {
 		//Clamp pitch - keep it between -90 and 90 so neck won't break
 		if self.dir.x < -PI / 2.0 {
 			self.dir.x = -PI / 2.0;
-		}
-		if self.dir.x >= PI / 2.0 {
+		} else if self.dir.x >= PI / 2.0 {
 			self.dir.x = PI / 2.0;
 		}
 
 		//Clamp yaw, keeping remainder  - keep between -180 to 180 (full circle)
 		if self.dir.y < -PI {
 			self.dir.y += 2.0 * PI;
-		}
-		if self.dir.y > PI {
+		} else if self.dir.y > PI {
 			self.dir.y -= 2.0 * PI;
 		}
 
 		//Clamp roll  - keep it between -90 and 90 so neck won't break
 		if self.dir.z < -PI / 2.0 {
 			self.dir.z = -PI / 2.0;
-		}
-		if self.dir.z >= PI / 2.0 {
+		} else if self.dir.z >= PI / 2.0 {
 			self.dir.z = PI / 2.0;
 		}
 
