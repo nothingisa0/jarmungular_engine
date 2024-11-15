@@ -21,7 +21,7 @@ impl Scene {
 	//Right now, doesn't really do much
 	pub fn init_scene() -> Scene {
 		//Create the camera by passing in the camera pos and target
-		let camera = Camera::new(vec3(0.0, 0.0, 20.0), vec3(0.0, 100.0, 0.0));
+		let camera = Camera::new(vec3(0.0, 0.0, 20.0), vec3(4.0, 100.0, 0.0));
 		
 		//Return the initialized scene
 		Scene {

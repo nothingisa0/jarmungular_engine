@@ -29,7 +29,6 @@ impl Camera {
 		let roll = 0.0;
 		
 		let dir = vec3(pitch, yaw, roll);
-		println!("{:?}", dir * vec3(180.0/PI, 180.0/PI, 180.0/PI));
 
 		//Make a camera
 		let mut init_camera = Camera {
@@ -134,7 +133,6 @@ impl Camera {
 		let yaw_adj = x * SENSITIVITY * PI / 180.0; //x mouse movement rotates about y axis (degrees, where sensitivity is in degrees per mouse increment)
 
 		self.rotate_view(pitch_adj, yaw_adj, 0.0);
-		println!("{:?}", self.dir * vec3(180.0/PI, 180.0/PI, 180.0/PI));
 	}
 
 	//Modifies the camera's aspect ratio when window is resized
