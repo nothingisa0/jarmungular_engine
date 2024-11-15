@@ -1,11 +1,12 @@
 use crate::constants::{WINDOW_WIDTH, WINDOW_HEIGHT, SENSITIVITY};
 
-use glam::f32::{vec3, Vec3, Mat3, Mat4};
+use std::f32::consts::PI;
+use glam::f32::{vec3, Vec3, Mat4};
 use winit::window::Window;
 
 pub struct Camera {
 	pos: Vec3, //The position of the camera
-	dir: Vec3, //Direction the camera is pointing towards as a normalized vector in world space (x, y, z)
+	dir: Vec3, //Direction the camera is pointing towards as a normalized vector in world space - spherical coordinates (pitch about x, yaw about y, roll about z)
 
 	fov_y_radians: f32, //Radians from top to bottom
 	aspect_ratio: f32, //Width over height
@@ -21,7 +22,14 @@ impl Camera {
 	//Make a camera, initialize it with default values, then calculate the required matrices
 	//Takes in a position and a target to be looking at (point in world space)
 	pub fn new(pos: Vec3, target: Vec3) -> Camera {
-		let dir = (target - pos).normalize_or(vec3(1.0, 0.0, 0.0)); //If it 
+		let dir_xyz = (target - pos).normalize_or(vec3(1.0, 0.0, 0.0));
+		
+		let pitch = (dir_xyz.y).asin();
+		let yaw = dir_xyz.x.atan2(dir_xyz.y);
+		let roll = 0.0;
+		
+		let dir = vec3(pitch, yaw, roll);
+		println!("{:?}", dir * vec3(180.0/PI, 180.0/PI, 180.0/PI));
 
 		//Make a camera
 		let mut init_camera = Camera {
@@ -44,9 +52,34 @@ impl Camera {
 		init_camera
 	}
 
-	//Calculate all the matrices
+	//Clamp pitch/yaw/roll and then calculate all the matrices
 	//This will need to be called if any of the camera's fields are adjusted manually, rather than through Camera's methods
 	fn calc_matrices(&mut self) {
+		//Clamp pitch - keep it between -90 and 90 so neck won't break
+		if self.dir.x < -PI / 2.0 {
+			self.dir.x = -PI / 2.0;
+		}
+		if self.dir.x >= PI / 2.0 {
+			self.dir.x = PI / 2.0;
+		}
+
+		//Clamp yaw, keeping remainder  - keep between -180 to 180 (full circle)
+		if self.dir.y < -PI {
+			self.dir.y += 2.0 * PI;
+		}
+		if self.dir.y > PI {
+			self.dir.y -= 2.0 * PI;
+		}
+
+		//Clamp roll  - keep it between -90 and 90 so neck won't break
+		if self.dir.z < -PI / 2.0 {
+			self.dir.z = -PI / 2.0;
+		}
+		if self.dir.z >= PI / 2.0 {
+			self.dir.z = PI / 2.0;
+		}
+
+		//Calculate matrices
 		self.view_matrix = self.calc_view_matrix();
 		self.projection_matrix = self.calc_projection_matrix();
 		self.render_matrix = self.calc_render_matrix();
@@ -55,10 +88,14 @@ impl Camera {
 	//Returns the view matrix
 	fn calc_view_matrix(&self) -> Mat4 {
 		let pos = self.pos;
-		let dir = self.dir;
-		let up = vec3(0.0, -1.0, 0.0);
+		let pitch = self.dir.x;
+		let yaw = self.dir.y;
+		let roll = self.dir.z;
 
-		Mat4::look_to_rh(pos, dir, up)
+		//First need to get the y coordinate flipped to go from world space (rh, y is up) to vulkan's NDC (right hand, y is down)
+		//Then need to multiply the position by the pitch/yaw/roll of the camera - mutiply by yaw first to gimbalize that axis
+		//Then need to shift to account for camera position
+		Mat4::from_rotation_z(roll) * Mat4::from_rotation_x(pitch) * Mat4::from_rotation_y(yaw) *  Mat4::from_translation(-pos) * Mat4::from_rotation_z(PI)
 	}
 
 	//Returns the perspective projection matrix
@@ -74,6 +111,17 @@ impl Camera {
 		projection_matrix * view_matrix
 	}
 
+	//Rotates the camera given a pitch, roll, yaw to rotate by
+	fn rotate_view(&mut self, pitch_adj: f32, yaw_adj: f32, roll_adj: f32) {
+		let pitch = self.dir.x + pitch_adj;
+		let yaw = self.dir.y + yaw_adj;
+		let roll = self.dir.z + roll_adj;
+
+		self.dir = vec3(pitch, yaw, roll);
+		//Clamping pitch/yaw/roll will happen during matrix calculation
+		self.calc_matrices();
+	}
+
 	//Make sure all matrices are updated, then return the render matrix
 	//This WON'T calculate the render matrix first. Calculation should be done at the end of any functions that may mutate the camera
 	pub fn get_render_matrix(&self) -> Mat4 {
@@ -81,18 +129,12 @@ impl Camera {
 	}
 
 	//Will rotate view when passed an x and y. Will use this for mouse movement
-	pub fn rotate_view(&mut self, x: f32, y: f32) {
-		use std::f32::consts::PI;
-		
-		let x_angle = y * SENSITIVITY * PI / 180.0; //y mouse movement rotates about x axis (degrees, where sensitivity is in degrees per mouse increment)
-		let y_angle = x * SENSITIVITY * PI / 180.0; //x mouse movement rotates about y axis (degrees, where sensitivity is in degrees per mouse increment)
-		
-		let x_rotation_matrix = Mat3::from_rotation_x(x_angle);
-		let y_rotation_matrix = Mat3::from_rotation_y(y_angle);
+	pub fn rotate_view_from_xy(&mut self, x: f32, y: f32) {
+		let pitch_adj = y * SENSITIVITY * PI / 180.0; //y mouse movement rotates about x axis (degrees, where sensitivity is in degrees per mouse increment)
+		let yaw_adj = x * SENSITIVITY * PI / 180.0; //x mouse movement rotates about y axis (degrees, where sensitivity is in degrees per mouse increment)
 
-		self.dir = y_rotation_matrix * x_rotation_matrix * self.dir;
-
-		self.calc_matrices();
+		self.rotate_view(pitch_adj, yaw_adj, 0.0);
+		println!("{:?}", self.dir * vec3(180.0/PI, 180.0/PI, 180.0/PI));
 	}
 
 	//Modifies the camera's aspect ratio when window is resized

@@ -86,10 +86,6 @@ impl EventHandler {
 		};
 	}
 
-
-
-
-
 	//Need to do mouse movement separately as a "device event"
 	//Raw mouse input stuff
 	fn mouse_movement(&mut self, event: DeviceEvent) {
@@ -97,7 +93,7 @@ impl EventHandler {
 		let camera = &mut self.scene.camera;
 
 		//Mouse movement will move the camera
-		if let DeviceEvent::MouseMotion{delta} = event {camera.rotate_view(delta.0 as f32, -delta.1 as f32)};
+		if let DeviceEvent::MouseMotion{delta} = event {camera.rotate_view_from_xy(delta.0 as f32, -delta.1 as f32)};
 	}
 
 	//What to do when closing the app
