@@ -22,9 +22,9 @@ mod constants;
 mod render;
 mod utility;
 mod scene;
-mod run;
+mod event;
 
-use run::EventHandler;
+use event::EventHandler;
 use winit::event_loop::{EventLoop, ControlFlow};
 
 
