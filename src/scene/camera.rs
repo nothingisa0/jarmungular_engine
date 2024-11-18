@@ -124,6 +124,11 @@ impl Camera {
 		self.render_matrix
 	}
 
+	//Gets camera position
+	pub fn get_pos(&self) -> Vec3 {
+		self.pos
+	}
+
 	//Will rotate view when passed an x and y. Will use this for mouse movement
 	pub fn rotate_view_from_xy(&mut self, x: f32, y: f32) {
 		let pitch_adj = y * SENSITIVITY * PI / 180.0; //y mouse movement rotates about x axis (degrees, where sensitivity is in degrees per mouse increment)
@@ -133,7 +138,12 @@ impl Camera {
 	}
 
 	//Modifies the camera's aspect ratio when window is resized
-	pub fn camera_window_resize(self, window: &Window) {
-		todo!();
+	pub fn camera_window_resize(&mut self, window: &Window) {
+		let width = window.inner_size().width as f32;
+		let height = window.inner_size().height as f32;
+
+		let aspect_ratio = width / height;
+		self.aspect_ratio = aspect_ratio;
+		self.calc_matrices();
 	}
 }

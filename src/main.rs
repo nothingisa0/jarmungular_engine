@@ -1,10 +1,8 @@
 //TO DO: fix physical device suitability score so it (hopefully) works on luke's computer and doesn't do the hookapp thing.
 //TO DO: better error handling
 //TO DO: use an index buffer once I start importing models
-//TO DO: camera direction currently wraps 360 if you're looking up. Want to gimbal lock it basically
-//TO DO: camera "resize_for_window" fn
-//TO DO: camera orientation breaks when going towards the top, it circles around. What the freak man. Target direction is also constant, so the current method won't work woith movement.
-//	Need to change how the camera works entirely to a yaw/pitch/roll setup
+//TO DO: Controls are horribly scuffed right now. Need to figure out a better way.
+//	Also gonna have to figure out how to base movement on facing direction
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.
@@ -20,9 +18,10 @@
 
 mod constants;
 mod render;
-mod utility;
 mod scene;
 mod event;
+mod controls;
+mod utility;
 
 use event::EventHandler;
 use winit::event_loop::{EventLoop, ControlFlow};

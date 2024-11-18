@@ -1418,13 +1418,6 @@ impl VulkanApp {
 		unsafe { device.end_command_buffer(command_buffer).expect("Failed to record to command buffer") };
 	}
 
-
-	//Wait until idle - will need to call from apphandler when close is requested to make sure drawing/presenting options aren't happening
-	//This should ONLY be used when things need to be destroyed
-	pub fn wait_idle(&self) {
-		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
-	}
-
 	//Function to call on a window resize event
 	//Would also want to do it on a "ERROR_OUT_OF_DATE_KHR" error from "acquire_next_image," but then "draw_frame" would require the window as an argument and would be mutable - just not necessary yet
 	//Gonna have to recreate everything that depends on swapchain/swapchain extents
@@ -1483,6 +1476,11 @@ impl VulkanApp {
 //Have to destroy anything that was explicitly created
 impl Drop for VulkanApp {
 	fn drop(&mut self) {
+		//Wait until nothing is in use - make sure drawing/presenting isn't happening
+		//This was being called cpu side before exiting the app, but then things weren't waiting if "x" was hit from the taskbar (some kind of semi-force quit??)
+		unsafe { self.device.device_wait_idle().expect("Failed to wait until device idle") }
+
+		//Destroy everything
 		unsafe {
 			self.device.destroy_semaphore(self.image_available_semaphore, None);
 			self.device.destroy_semaphore(self.render_finished_semaphore, None);
