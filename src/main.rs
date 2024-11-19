@@ -3,6 +3,7 @@
 //TO DO: use an index buffer once I start importing models
 //TO DO: Controls are horribly scuffed right now. Need to figure out a better way.
 //	Also gonna have to figure out how to base movement on facing direction
+//TO DO: better game loop timing/fixed timestep
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.

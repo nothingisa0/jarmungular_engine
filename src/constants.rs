@@ -22,3 +22,6 @@ pub const DEVICE_EXTENSIONS: [&CStr; 1] = [vk::KHR_SWAPCHAIN_NAME];
 
 //Mouse sensitivity - measured in degrees per mouse increment
 pub const SENSITIVITY: f32 = 0.04;
+
+//FPS - will make a setting later
+pub const FPS: f32 = 240.0;

@@ -1240,7 +1240,7 @@ impl VulkanApp {
 	//Need to pass in the window to get width/height, need to pass scene info
 	pub fn draw_frame(&self, window: &Window, scene: &Scene) {
 		//If the window is size 0, don't even deal with it
-		//Running into too many problems with keeping the command buffer extent + framebuffer extent + swapchain extent gucchi. Maybe a later solution will be
+		//Running into too many problems with keeping the command buffer extent + framebuffer extent + swapchain extent the same
 		if window.inner_size().width == 0 || window.inner_size().height == 0 {
 			return
 		}

@@ -6,10 +6,14 @@ use crate::render::Vertex;
 use glam::f32::{vec3, vec4};
 
 //Make the vertices for a test triangle
-pub const TEST_TRIANGLE_VERTICES: [Vertex; 3] = [
-	Vertex {pos: vec4(  0.0,100.0,  0.0,  1.0), color: vec3(1.0, 0.0, 0.0)},
-	Vertex {pos: vec4(  5.0, -5.0,  0.0,  1.0), color: vec3(0.0, 1.0, 0.0)},
-	Vertex {pos: vec4( -5.0, -5.0,  0.0,  1.0), color: vec3(0.0, 0.0, 1.0)},
+pub const TEST_TRIANGLE_VERTICES: [Vertex; 6] = [
+	Vertex {pos: vec4(  20.0,100.0,  0.0,  1.0), color: vec3(1.0, 0.0, 0.0)},
+	Vertex {pos: vec4(  20.0, -5.0, -5.0,  1.0), color: vec3(0.0, 1.0, 0.0)},
+	Vertex {pos: vec4(  20.0, -5.0,  13.0,  1.0), color: vec3(0.0, 0.0, 1.0)},
+
+	Vertex {pos: vec4(  20.0, -5.0,  10.0,  1.0), color: vec3(1.0, 1.0, 1.0)},
+	Vertex {pos: vec4(  20.0,-10.0, -5.0,  1.0), color: vec3(0.0, 0.0, 0.0)},
+	Vertex {pos: vec4(  20.0,-10.0,  5.0,  1.0), color: vec3(0.0, 0.0, 0.0)},
 ];
 
 //Scene with all the stuff in it
@@ -21,7 +25,7 @@ impl Scene {
 	//Right now, doesn't really do much
 	pub fn init_scene() -> Scene {
 		//Create the camera by passing in the camera pos and target
-		let camera = Camera::new(vec3(0.0, 0.0, 20.0), vec3(4.0, 100.0, 0.0));
+		let camera = Camera::new(vec3(0.0, 0.0, 10.0), vec3(20.0, 100.0, 0.0));
 		
 		//Return the initialized scene
 		Scene {

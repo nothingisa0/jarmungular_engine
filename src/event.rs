@@ -45,23 +45,33 @@ impl EventHandler {
 		let window = self.window.as_ref().unwrap();
 		let scene = &mut self.scene;
 
-		let control_queues = &self.control_queues;
+		let control_queues = &mut self.control_queues;
 
 		//Get the initial time
 		let initial_time = Instant::now();
 
 		//Execute all the controls that happened this frame, then clear the control queue
-		controls::execute_controls(vulkan_app, window, scene, event_loop, control_queues);
+		control_queues.execute_controls(vulkan_app, window, scene, event_loop);
 		self.control_queues.clear();
 
 		//Acquire a swapchain image, render to it, then present it from the swapchain
 		vulkan_app.draw_frame(window, scene);
 
+		//Target time for one frame
+		let frame_time = Duration::from_secs_f32(1.0 / FPS);
 		//Check the elapsed time
 		let elapsed_time = initial_time.elapsed();
 
 		//Right now, just sleep until the next frame-ish time
-		sleep(Duration::from_millis(10));
+		//If loop was too long, just run the next one ASAP
+		//This is a horrible way to do it, but works for now
+		if elapsed_time < frame_time {
+			let time_to_sleep = frame_time - elapsed_time;
+			sleep(time_to_sleep);
+		} else {
+			println!("Skipped frame at {:?} fps", FPS);
+		}
+
 
 		//Request a redraw for next frame
 		window.request_redraw();

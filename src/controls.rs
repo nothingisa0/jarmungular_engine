@@ -1,6 +1,7 @@
 use crate::render::pipeline;
 use crate::scene::Scene;
 
+use std::collections::HashSet;
 use winit::{
 	event::{WindowEvent, DeviceEvent, ElementState, MouseButton},
 	event_loop::{ActiveEventLoop},
@@ -14,6 +15,9 @@ pub struct ControlQueues {
 	key_queue: Vec<WindowEvent>, //Will keep a tally of all the keyboard controls that need to be executed in a frame
 	mouse_queue: Vec<WindowEvent>, //Same thing but for mouse
 	raw_mouse_queue: Vec<DeviceEvent>, //Same thing but for raw mouse input type stuff
+
+	held_keys: HashSet<Key>, //A set (no duplicate elements) of all the keys being held down
+	held_mouse_buttons: HashSet<MouseButton>, //A set (no duplicate elements) of all the mouse buttons being held down
 }
 
 impl ControlQueues {
@@ -22,6 +26,9 @@ impl ControlQueues {
 			key_queue: vec![],
 			mouse_queue: vec![],
 			raw_mouse_queue: vec![],
+
+			held_keys: HashSet::new(),
+			held_mouse_buttons: HashSet::new(),
 		}
 	}
 
@@ -42,126 +49,151 @@ impl ControlQueues {
 	pub fn push_raw_mouse(&mut self, event: DeviceEvent) {
 		self.raw_mouse_queue.push(event);
 	}
-}
 
-//Run through all the controls that happened in a frame, execute them
-//Key, mouse, and raw mouse queues are separate so the match statement doesn't have to run twice
-pub fn execute_controls(vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop, control_queues: &ControlQueues) {
-	let key_queue = &control_queues.key_queue;
-	let mouse_queue = &control_queues.mouse_queue;
-	let raw_mouse_queue = &control_queues.raw_mouse_queue;
+	//Run through all the controls that happened in a frame, execute them
+	//Key, mouse, and raw mouse queues are separate. The match statement is kinda running twice so all the fields of the enums can be extracted, but this way is much easier for readability
+	pub fn execute_controls(&mut self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
+		self.keyboard_queue_execute(vulkan_app, window, scene, event_loop);
+		self.mouse_queue_execute(vulkan_app, window, scene, event_loop);
+		self.raw_mouse_queue_execute(vulkan_app, window, scene, event_loop);
 
-	for event in key_queue {
-		keyboard_controls(vulkan_app, window, scene, event_loop, &event);
+		self.holds_execute(vulkan_app, window, scene, event_loop);
 	}
 
-	for event in mouse_queue {
-		mouse_controls(vulkan_app, window, scene, event_loop, &event);
+	//Key press
+	fn keyboard_queue_execute(&mut self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &Scene, event_loop: &ActiveEventLoop) {
+		//Loop through keyboard events
+		for event in &self.key_queue {
+			if let WindowEvent::KeyboardInput{device_id, event, is_synthetic} = event {
+				let key = event.key_without_modifiers();
+				let key_state = event.state;
+
+				//Add or remove the key to the hashset of keys being held
+				if key_state == ElementState::Pressed {
+					self.held_keys.insert(key.clone()); //Key should be small enough for a clone to not matter
+				} else if key_state == ElementState::Released {
+					self.held_keys.remove(&key);
+				}
+
+				//Matching both the key and the state
+				//Only include controls that should execute on press. Controls that execute while a key is held should be in "holds_execute" fn
+				match (key.as_ref(), key_state) {
+					//Test key r
+					(Key::Character("r"), ElementState::Pressed) => {
+						println!("r key pressed");
+					},
+
+					//Esc key. Again, the winit example does it fancier with just setting a bool, then checks that bool later
+					(Key::Named(NamedKey::Escape), ElementState::Pressed) => {
+						println!("The esc button was pressed; stopping");
+						event_loop.exit();
+					},
+
+					_ => (),
+				}
+			}
+		}
 	}
 
-	for event in raw_mouse_queue {
-		raw_mouse_controls(vulkan_app, window, scene, event_loop, &event);
+	//Mouse button press
+	fn mouse_queue_execute(&mut self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &Scene, event_loop: &ActiveEventLoop) {
+		//Loop through mouse events
+		for event in &self.mouse_queue {
+			if let WindowEvent::MouseInput{device_id, state, button} = event {
+
+				//Add or remove the button to the hashset of buttons being held
+				if *state == ElementState::Pressed {
+					self.held_mouse_buttons.insert(*button);
+				} else if *state == ElementState::Released {
+					self.held_mouse_buttons.remove(button);
+				}
+				
+				//Only include controls that should execute on press. Controls that execute while a key is held should be in "holds_execute" fn
+				match (button, state) {
+					(MouseButton::Right, ElementState::Pressed) => {
+						window.set_cursor_visible(true);
+						window.set_cursor_grab(CursorGrabMode::None).expect("Failed to set cursor mode");
+					}
+
+					(MouseButton::Left, ElementState::Pressed) => {
+						window.set_cursor_visible(false);
+						window.set_cursor_grab(CursorGrabMode::Confined).expect("Failed to set cursor mode");
+					}
+
+					_ => ()
+				};
+			}
+		}
 	}
-}
 
-//Key press
-fn keyboard_controls(vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &Scene, event_loop: &ActiveEventLoop, event: &WindowEvent) {
-	if let WindowEvent::KeyboardInput{device_id, event, is_synthetic} = event {
-		let key = event.key_without_modifiers();
-		let key_state = event.state;
+	//Raw mouse input stuff
+	fn raw_mouse_queue_execute(&self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
+		//Loop through raw mouse events
+		for event in &self.raw_mouse_queue {
+			if let DeviceEvent::MouseMotion{delta} = event {
+				scene.camera.rotate_view_from_xy(delta.0 as f32, -delta.1 as f32);
+			};
+		}
+	}
 
-		//Matching both the key and the state
-		match (key.as_ref(), key_state) {
-			//Test key r
-			(Key::Character("r"), ElementState::Pressed) => {
-				println!("r key pressed");
-			},
+	//Execute anything that should repeated on hold (like wasd movement)
+	//Uses the hashsets populated from the other execute fns
+	fn holds_execute(&self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
+		//Using these for movement right now. Once movement is wrapped into a player struct, won't need em
+		use std::f32::consts::PI;
+		use glam::f32::Mat3;
 
-			//Esc key. Again, the winit example does it fancier with just setting a bool, then checks that bool later
-			(Key::Named(NamedKey::Escape), ElementState::Pressed) => {
-				println!("The esc button was pressed; stopping");
-				event_loop.exit();
-			},
+		//Iterate through the hash set of held keys
+		for key in &self.held_keys {
+			match key.as_ref() {
+					//Move forward - simple noclip movement
+					Key::Character("w") => {
+						let pos = scene.camera.get_pos();
+						let forward = scene.camera.get_forward_dir() * 0.2;
+						scene.camera.set_pos(pos.x + forward.x, pos.y + forward.y, pos.z + forward.z);
+					},
 
-			_ => (),
+					//Move left - simple noclip movement
+					Key::Character("a") => {
+						let pos = scene.camera.get_pos();
+						let forward = scene.camera.get_forward_dir() * 0.2;
+						let rotation_matrix = Mat3::from_rotation_y(PI / 2.0);
+						let left = rotation_matrix * forward;
+						scene.camera.set_pos(pos.x + left.x, pos.y, pos.z + left.z);
+					},
+
+					//Move backwards - simple noclip movement
+					Key::Character("s") => {
+						let pos = scene.camera.get_pos();
+						let forward = scene.camera.get_forward_dir() * 0.2;
+						let rotation_matrix = Mat3::from_rotation_y(PI);
+						let backward = rotation_matrix * forward;
+						scene.camera.set_pos(pos.x + backward.x, pos.y - backward.y, pos.z + backward.z);
+					},
+
+					//Move right - simple noclip movement
+					Key::Character("d") => {
+						let pos = scene.camera.get_pos();
+						let forward = scene.camera.get_forward_dir() * 0.2;
+						let rotation_matrix = Mat3::from_rotation_y(3.0 * PI / 2.0);
+						let right = rotation_matrix * forward;
+						scene.camera.set_pos(pos.x + right.x, pos.y, pos.z + right.z);
+					},
+
+					//Move up - simple noclip movement
+					Key::Named(NamedKey::Space) => {
+						let pos = scene.camera.get_pos();
+						scene.camera.set_pos(pos.x, pos.y + 0.2, pos.z);
+					},
+
+					//Move down - simple noclip movement
+					Key::Named(NamedKey::Control) => {
+						let pos = scene.camera.get_pos();
+						scene.camera.set_pos(pos.x, pos.y - 0.2, pos.z);
+					},
+
+					_ => (),
+				}
 		}
 	}
 }
-
-//Mouse button press
-fn mouse_controls(vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &Scene, event_loop: &ActiveEventLoop, event: &WindowEvent) {
-	if let WindowEvent::MouseInput{device_id, state, button} = event {
-		match button {
-			MouseButton::Right => {
-				window.set_cursor_visible(true);
-				window.set_cursor_grab(CursorGrabMode::None).expect("Failed to set cursor mode");
-			}
-			_ => ()
-		};
-	}
-}
-
-//Raw mouse input stuff
-fn raw_mouse_controls(vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop, event: &DeviceEvent) {
-	if let DeviceEvent::MouseMotion{delta} = event {
-		scene.camera.rotate_view_from_xy(delta.0 as f32, -delta.1 as f32)
-	};
-}
-
-
-
-
-
-
-
-
-
-
-// //A big match statement for the controls, to be called on a key press event
-// //Press/release are defined under "state"
-// //Match things as a tuple of the key and its press/release state. Later, might also want to pass in something like a character state (grounded, jumpsquat, etc), idk
-// //Not sure how this would handle something like a "sprint key." I think it would have to turn on/off a "sprint" player state on press/release, and the sprint state would change the behavior of other controls (eg walk -> run)
-// //Some people store the key states in a hash set, but I don't think that's necessary in a game context
-// fn keyboard_controls(event_handler: &EventHandler, event_loop: &ActiveEventLoop, event: WindowEvent) {
-// 	//Get the key WITHOUT any modifiers (like shift)
-// 	let key = event.key_without_modifiers();
-// 	let key_state = event.state;
-
-// 	//Matching both the key and the state
-// 	match (key.as_ref(), key_state) {
-// 		//Test key r
-// 		(Key::Character("r"), ElementState::Pressed) => {
-// 			println!("r key pressed");
-// 		},
-
-// 		//Esc key. Again, the winit example does it fancier with just setting a bool, then checks that bool later
-// 		(Key::Named(NamedKey::Escape), ElementState::Pressed) => {
-// 			println!("The esc button was pressed; stopping");
-// 			self.close_app(event_loop);
-// 		},
-
-// 		_ => (),
-// 	}
-// }
-
-// //Mouse button press
-// fn mouse_controls(event_handler: &EventHandler, event_loop: &ActiveEventLoop, event: WindowEvent) {
-// 	//Matching the mouse button pressed
-// 	match button {
-// 		MouseButton::Right => {
-// 			window.set_cursor_visible(true);
-// 			window.set_cursor_grab(CursorGrabMode::None).expect("Failed to set cursor mode");
-// 		}
-// 		_ => ()
-// 	};
-// }
-
-// //Need to do mouse movement separately as a "device event"
-// //Raw mouse input stuff
-// fn mouse_movement(event_handler: &EventHandler, event_loop: &ActiveEventLoop, event: WindowEvent) {
-// 	let window = window.as_ref().unwrap();
-// 	let camera = scene.camera;
-
-// 	//Mouse movement will move the camera
-// 	if let DeviceEvent::MouseMotion{delta} = event {camera.rotate_view_from_xy(delta.0 as f32, -delta.1 as f32)};
-// }

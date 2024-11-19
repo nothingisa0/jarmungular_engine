@@ -1,7 +1,7 @@
 use crate::constants::{WINDOW_WIDTH, WINDOW_HEIGHT, SENSITIVITY};
 
 use std::f32::consts::PI;
-use glam::f32::{vec3, Vec3, Mat4};
+use glam::f32::{vec3, Vec3, vec4, Mat4};
 use winit::window::Window;
 
 pub struct Camera {
@@ -24,8 +24,8 @@ impl Camera {
 	pub fn new(pos: Vec3, target: Vec3) -> Camera {
 		let dir_xyz = (target - pos).normalize_or(vec3(1.0, 0.0, 0.0));
 		
-		let pitch = (dir_xyz.y).asin();
-		let yaw = dir_xyz.x.atan2(dir_xyz.y);
+		let pitch = dir_xyz.y.asin(); //Can cheat and use sin because the xyz vector is normalized
+		let yaw = -dir_xyz.x.atan2(dir_xyz.z);
 		let roll = 0.0;
 		
 		let dir = vec3(pitch, yaw, roll);
@@ -61,10 +61,10 @@ impl Camera {
 			self.dir.x = PI / 2.0;
 		}
 
-		//Clamp yaw, keeping remainder  - keep between -180 to 180 (full circle)
-		if self.dir.y < -PI {
+		//Clamp yaw, keeping remainder  - keep between 0 to 360 (full circle)
+		if self.dir.y < 0.0 {
 			self.dir.y += 2.0 * PI;
-		} else if self.dir.y > PI {
+		} else if self.dir.y > 2.0 * PI {
 			self.dir.y -= 2.0 * PI;
 		}
 
@@ -88,10 +88,10 @@ impl Camera {
 		let yaw = self.dir.y;
 		let roll = self.dir.z;
 
-		//First need to get the y coordinate flipped to go from world space (rh, y is up) to vulkan's NDC (right hand, y is down)
-		//Then need to multiply the position by the pitch/yaw/roll of the camera - mutiply by yaw first to gimbalize that axis
+		//First need to flip x, y, and z for some evil reason. I think it's to get things in a right handed coordinate system
 		//Then need to shift to account for camera position
-		Mat4::from_rotation_z(roll) * Mat4::from_rotation_x(pitch) * Mat4::from_rotation_y(yaw) *  Mat4::from_translation(-pos) * Mat4::from_rotation_z(PI)
+		//Then need to multiply the position by the pitch/yaw/roll of the camera - mutiply by yaw first to gimbalize that axis
+		Mat4::from_rotation_z(roll) * Mat4::from_rotation_x(pitch) * Mat4::from_rotation_y(yaw) * Mat4::from_translation(pos) * Mat4::from_diagonal(vec4(-1.0, -1.0, -1.0, 1.0))
 	}
 
 	//Returns the perspective projection matrix
@@ -118,15 +118,40 @@ impl Camera {
 		self.calc_matrices();
 	}
 
+
+	//----------------------------------------- PUBLIC CAMERA FUNCTIONS ----------------------------------------------
+
+
+	//Gets camera position
+	pub fn get_pos(&self) -> Vec3 {
+		self.pos
+	}
+
 	//Make sure all matrices are updated, then return the render matrix
 	//This WON'T calculate the render matrix first. Calculation should be done at the end of any functions that may mutate the camera
 	pub fn get_render_matrix(&self) -> Mat4 {
 		self.render_matrix
 	}
 
-	//Gets camera position
-	pub fn get_pos(&self) -> Vec3 {
-		self.pos
+	//Get the "forward" direction in world space
+	pub fn get_forward_dir(&self) -> Vec3 {
+		let dir_normalized = self.dir;
+		let pitch = self.dir.x;
+		let yaw = self.dir.y;
+		let roll = self.dir.z;
+
+		//This will get screwed up if I ever add nonzero roll
+		let y = pitch.sin();
+		let z = yaw.cos() * pitch.cos();
+		let x = -yaw.sin() * pitch.cos();
+
+		vec3(x, y, z).normalize_or(vec3(1.0, 0.0, 0.0))
+	}
+
+	//Sets camera position, recalculates matrices
+	pub fn set_pos(&mut self, x: f32, y: f32, z: f32) {
+		self.pos = vec3(x, y, z);
+		self.calc_matrices();
 	}
 
 	//Will rotate view when passed an x and y. Will use this for mouse movement
@@ -137,7 +162,7 @@ impl Camera {
 		self.rotate_view(pitch_adj, yaw_adj, 0.0);
 	}
 
-	//Modifies the camera's aspect ratio when window is resized
+	//Modifies the camera's aspect ratio based on new window dimensions
 	pub fn camera_window_resize(&mut self, window: &Window) {
 		let width = window.inner_size().width as f32;
 		let height = window.inner_size().height as f32;
