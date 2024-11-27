@@ -1,6 +1,7 @@
 use crate::render::pipeline;
 use crate::scene::Scene;
 
+use std::f32::consts::PI;
 use std::collections::HashSet;
 use winit::{
 	event::{WindowEvent, DeviceEvent, ElementState, MouseButton},
@@ -9,6 +10,7 @@ use winit::{
 	keyboard::{Key, NamedKey},
 	platform::modifier_supplement::KeyEventExtModifierSupplement,
 };
+use glam::f32::{vec3, Mat3};
 
 //Make a struct to hold all the events corresponding to different controls
 pub struct ControlQueues {
@@ -139,57 +141,60 @@ impl ControlQueues {
 	//Execute anything that should repeated on hold (like wasd movement)
 	//Uses the hashsets populated from the other execute fns
 	fn holds_execute(&self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
-		//Using these for movement right now. Once movement is wrapped into a player struct, won't need em
-		use std::f32::consts::PI;
-		use glam::f32::Mat3;
+		//Speed for the noclip movement
+		let mut speed = 0.2;
+
+		if self.held_keys.contains(&Key::Named(NamedKey::Shift)) {
+			speed = 0.8;
+		};
 
 		//Iterate through the hash set of held keys
 		for key in &self.held_keys {
 			match key.as_ref() {
-					//Move forward - simple noclip movement
+					//Move forward
 					Key::Character("w") => {
 						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * 0.2;
-						scene.camera.set_pos(pos.x + forward.x, pos.y + forward.y, pos.z + forward.z);
+						let forward = scene.camera.get_forward_dir() * speed;
+						scene.player.move_grounded(vec3(forward.x, 0.0, forward.z));
 					},
 
-					//Move left - simple noclip movement
+					//Move left
 					Key::Character("a") => {
 						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * 0.2;
+						let forward = scene.camera.get_forward_dir() * speed;
 						let rotation_matrix = Mat3::from_rotation_y(PI / 2.0);
 						let left = rotation_matrix * forward;
-						scene.camera.set_pos(pos.x + left.x, pos.y, pos.z + left.z);
+						scene.player.move_grounded(vec3(left.x, 0.0, left.z));
 					},
 
-					//Move backwards - simple noclip movement
+					//Move backwards
 					Key::Character("s") => {
 						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * 0.2;
+						let forward = scene.camera.get_forward_dir() * speed;
 						let rotation_matrix = Mat3::from_rotation_y(PI);
 						let backward = rotation_matrix * forward;
-						scene.camera.set_pos(pos.x + backward.x, pos.y - backward.y, pos.z + backward.z);
+						scene.player.move_grounded(vec3(backward.x, 0.0, backward.z));
 					},
 
-					//Move right - simple noclip movement
+					//Move right
 					Key::Character("d") => {
 						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * 0.2;
+						let forward = scene.camera.get_forward_dir() * speed;
 						let rotation_matrix = Mat3::from_rotation_y(3.0 * PI / 2.0);
 						let right = rotation_matrix * forward;
-						scene.camera.set_pos(pos.x + right.x, pos.y, pos.z + right.z);
+						scene.player.move_grounded(vec3(right.x, 0.0, right.z));
 					},
 
 					//Move up - simple noclip movement
 					Key::Named(NamedKey::Space) => {
 						let pos = scene.camera.get_pos();
-						scene.camera.set_pos(pos.x, pos.y + 0.2, pos.z);
+						scene.camera.set_pos(pos.x, pos.y + speed, pos.z);
 					},
 
 					//Move down - simple noclip movement
 					Key::Named(NamedKey::Control) => {
 						let pos = scene.camera.get_pos();
-						scene.camera.set_pos(pos.x, pos.y - 0.2, pos.z);
+						scene.camera.set_pos(pos.x, pos.y - speed, pos.z);
 					},
 
 					_ => (),

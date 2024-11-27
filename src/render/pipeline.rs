@@ -1384,7 +1384,7 @@ impl VulkanApp {
 
 		//Calculate the matrix to push to the shaders
 		//Need to make sure alignment rules are held to - since this is just a single Mat4 of 128 bytes
-		let render_matrix_bytes = scene.render_matrix_bytes();
+		let render_matrix_bytes = scene.get_render_matrix_bytes();
 		//Push the matrix as a push constant
 		unsafe { device.cmd_push_constants(command_buffer, pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, &render_matrix_bytes) };
 

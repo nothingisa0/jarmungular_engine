@@ -1,15 +1,14 @@
-//TO DO: fix physical device suitability score so it (hopefully) works on luke's computer and doesn't do the hookapp thing.
-//TO DO: better error handling
 //TO DO: use an index buffer once I start importing models
-//TO DO: Controls are horribly scuffed right now. Need to figure out a better way.
-//	Also gonna have to figure out how to base movement on facing direction
-//TO DO: better game loop timing/fixed timestep
+//TO DO: make friction work good - right now, friction's "deadzone" will beat out acceleration if acceleration is too low - maybe that's fine, and values just need to be tuned?
+//	Also having problems with the wasd movement. If 2 keys are held, the move function is invoked for both of them, doubling the speed
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.
 	//Maybe something like: a render pass for all the mirrors in the scene, depth/stencil prepass (for mirror stencil, might not need, depth prepass may help forward renderer), postprocessing pass, pass that renders to swapchain
 //CONSIDER: Might have to handle minimized windows better in general. It pretty much pauses presentation right now, which isn't the winit recommended solution.
 //CONSIDER: separate static and dynamic geometry? Static should be updated once at the beginning, dynamic should be updated once per frame. Right now, everything in memory manager is static.
+//CONSIDER: better game loop timing/fixed timestep
+//CONSIDER: better error handling
 
 
 //#![allow(unused_imports)]

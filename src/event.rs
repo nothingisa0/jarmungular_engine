@@ -54,6 +54,9 @@ impl EventHandler {
 		control_queues.execute_controls(vulkan_app, window, scene, event_loop);
 		self.control_queues.clear();
 
+		//Update the scene
+		scene.update();
+
 		//Acquire a swapchain image, render to it, then present it from the swapchain
 		vulkan_app.draw_frame(window, scene);
 
@@ -76,13 +79,10 @@ impl EventHandler {
 		//Request a redraw for next frame
 		window.request_redraw();
 	}
-}
 
-//Winit stuff - application handler
-impl ApplicationHandler for EventHandler {
-	//This event happens whenever the application is resumed (or when first ran)
-	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-		//Setup the window attributes for the "window" field of the vulkanapp struct
+	//Will call this after a "resumed" event - set everything up
+	fn setup(&mut self, event_loop: &ActiveEventLoop) {
+		//Setup the window attributes
 		let window_attributes = Window::default_attributes()
 			.with_title(WINDOW_TITLE)
 			.with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -101,7 +101,15 @@ impl ApplicationHandler for EventHandler {
 		//Set vulkan app handler's fields now
 		self.window = Some(window);
 		self.vulkan_app = Some(vulkan_app);
+	}
+}
 
+//Winit stuff - application handler
+impl ApplicationHandler for EventHandler {
+	//This event happens whenever the application is resumed (or when first ran)
+	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+		//Call the setup function defined above
+		self.setup(event_loop);
 	}
 	
 	fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
