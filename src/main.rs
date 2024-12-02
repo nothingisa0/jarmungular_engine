@@ -1,6 +1,7 @@
 //TO DO: use an index buffer once I start importing models
 //TO DO: make friction work good - right now, friction's "deadzone" will beat out acceleration if acceleration is too low - maybe that's fine, and values just need to be tuned?
 //	Also having problems with the wasd movement. If 2 keys are held, the move function is invoked for both of them, doubling the speed
+//TO DO: direction is a little funky when looking almost straight up/down
 
 
 //CONSIDER: not rendering directly to swapchain - instead rendering to a separate image and then copy to swapchain (separating rending and presentation). Will need for mirrors and postprocessing. Use sascha example.

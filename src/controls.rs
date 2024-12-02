@@ -1,5 +1,6 @@
 use crate::render::pipeline;
 use crate::scene::Scene;
+use crate::utility::debug;
 
 use std::f32::consts::PI;
 use std::collections::HashSet;
@@ -80,16 +81,15 @@ impl ControlQueues {
 				//Matching both the key and the state
 				//Only include controls that should execute on press. Controls that execute while a key is held should be in "holds_execute" fn
 				match (key.as_ref(), key_state) {
-					//Test key r
-					(Key::Character("r"), ElementState::Pressed) => {
-						println!("r key pressed");
-					},
-
-					//Esc key. Again, the winit example does it fancier with just setting a bool, then checks that bool later
+					//Esc key will close the program immediately
 					(Key::Named(NamedKey::Escape), ElementState::Pressed) => {
 						println!("The esc button was pressed; stopping");
 						event_loop.exit();
 					},
+
+					(Key::Character("m"), ElementState::Pressed) => {
+						debug::midi_debug_controls(&self.held_keys);
+					}
 
 					_ => (),
 				}
@@ -141,64 +141,55 @@ impl ControlQueues {
 	//Execute anything that should repeated on hold (like wasd movement)
 	//Uses the hashsets populated from the other execute fns
 	fn holds_execute(&self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
-		//Speed for the noclip movement
-		let mut speed = 0.2;
+		self.move_controls_execute(vulkan_app, window, scene, event_loop);
+	}
 
-		if self.held_keys.contains(&Key::Named(NamedKey::Shift)) {
-			speed = 0.8;
+	//Pass in the hashset, will do all the wasd/movement checks and pass into the appropriate function
+	fn move_controls_execute(&self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
+		let mut dir = vec3(0.0, 0.0, 0.0);
+
+		//Forward direction
+		if self.held_keys.contains(&Key::Character("w".into())) {
+			let pos = scene.camera.get_pos();
+			let forward = scene.camera.get_forward_dir();
+
+			dir += vec3(forward.x, 0.0, forward.z);
 		};
 
-		//Iterate through the hash set of held keys
-		for key in &self.held_keys {
-			match key.as_ref() {
-					//Move forward
-					Key::Character("w") => {
-						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * speed;
-						scene.player.move_grounded(vec3(forward.x, 0.0, forward.z));
-					},
+		//Left direction
+		if self.held_keys.contains(&Key::Character("a".into())) {
+			let pos = scene.camera.get_pos();
+			let forward = scene.camera.get_forward_dir();
+			let rotation_matrix = Mat3::from_rotation_y(PI / 2.0);
+			let left = rotation_matrix * forward;
 
-					//Move left
-					Key::Character("a") => {
-						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * speed;
-						let rotation_matrix = Mat3::from_rotation_y(PI / 2.0);
-						let left = rotation_matrix * forward;
-						scene.player.move_grounded(vec3(left.x, 0.0, left.z));
-					},
+			dir += vec3(left.x, 0.0, left.z);
+		};
 
-					//Move backwards
-					Key::Character("s") => {
-						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * speed;
-						let rotation_matrix = Mat3::from_rotation_y(PI);
-						let backward = rotation_matrix * forward;
-						scene.player.move_grounded(vec3(backward.x, 0.0, backward.z));
-					},
+		//Backward direction
+		if self.held_keys.contains(&Key::Character("s".into())) {
+			let pos = scene.camera.get_pos();
+			let forward = scene.camera.get_forward_dir();
+			let rotation_matrix = Mat3::from_rotation_y(PI);
+			let backward = rotation_matrix * forward;
 
-					//Move right
-					Key::Character("d") => {
-						let pos = scene.camera.get_pos();
-						let forward = scene.camera.get_forward_dir() * speed;
-						let rotation_matrix = Mat3::from_rotation_y(3.0 * PI / 2.0);
-						let right = rotation_matrix * forward;
-						scene.player.move_grounded(vec3(right.x, 0.0, right.z));
-					},
+			dir += vec3(backward.x, 0.0, backward.z);
+		};
 
-					//Move up - simple noclip movement
-					Key::Named(NamedKey::Space) => {
-						let pos = scene.camera.get_pos();
-						scene.camera.set_pos(pos.x, pos.y + speed, pos.z);
-					},
+		//Right direction
+		if self.held_keys.contains(&Key::Character("d".into())) {
+			let pos = scene.camera.get_pos();
+			let forward = scene.camera.get_forward_dir();
+			let rotation_matrix = Mat3::from_rotation_y(3.0 * PI / 2.0);
+			let right = rotation_matrix * forward;
 
-					//Move down - simple noclip movement
-					Key::Named(NamedKey::Control) => {
-						let pos = scene.camera.get_pos();
-						scene.camera.set_pos(pos.x, pos.y - speed, pos.z);
-					},
+			dir += vec3(right.x, 0.0, right.z);
+		};
 
-					_ => (),
-				}
+		//If the direction is nonzero, movement time
+		if dir.length_squared() > 0.0 {
+			//Direction will be normalized when passed into the "move_grounded" fn
+			scene.player.move_grounded(dir);
 		}
 	}
 }

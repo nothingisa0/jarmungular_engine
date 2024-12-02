@@ -1,8 +1,11 @@
 use glam::f32::{vec3, Vec3};
 
-const MOVE_ACCEL: f32 = 0.5; //Acceleration when starting movement - units per timestep
-const FRICTION_DECCEL: f32 = 0.1; //Decceleration from friction
+const MOVE_ACCEL: f32 = 0.1; //Acceleration when starting movement - units per timestep
+const KICKOFF_BOOST_FACTOR: f32 = 2.0; //Factor to multiply move acceleration by when standing still
+
 const MAX_MOVE_VELOCITY: f32 = 1.0; //Speed cap
+
+const FRICTION_DECCEL: f32 = 0.1; //Decceleration from friction
 
 //Structure to hold all the player info
 pub struct Player {
@@ -26,7 +29,18 @@ impl Player {
 
 	//Adds a given speed in a given direction
 	pub fn move_grounded(&mut self, dir: Vec3) {
-		self.vel += dir * MOVE_ACCEL;
+		//Normalize the direction
+		let normalized_dir = dir.normalize_or_zero();
+
+		//If already moving, just add the move acceleration
+		//If stationary instead, give a bigger boost to kinda "kick off"
+		if self.vel.length_squared() != 0.0 {
+			self.vel += normalized_dir * MOVE_ACCEL;
+			println!("Nonzero: {:?}", self.vel.length());
+		} else {
+			self.vel += normalized_dir * MOVE_ACCEL * KICKOFF_BOOST_FACTOR;
+			println!("Zero, kickoff time!: {:?}", self.vel.length());
+		}
 
 		//Don't go higher than the speed cap
 		let vel_mag = self.vel.length_squared();
@@ -55,19 +69,11 @@ impl Player {
 	//Decceleration from friction
 	//Will need to make this tied to state eventually (less air friction than ground friction)
 	fn friction_deccel(&mut self) {
-		// if self.vel.x > FRICTION_DECCEL {self.vel.x -= FRICTION_DECCEL}
-		// else if self.vel.x < -FRICTION_DECCEL {self.vel.x += FRICTION_DECCEL}
-		// else {self.vel.x = 0.0};
-		// if self.vel.z > FRICTION_DECCEL {self.vel.z -= FRICTION_DECCEL}
-		// else if self.vel.z < -FRICTION_DECCEL {self.vel.z += FRICTION_DECCEL}
-		// else {self.vel.z = 0.0};
-
 		let vel_mag = self.vel.length_squared();
 		if vel_mag > FRICTION_DECCEL * FRICTION_DECCEL {
-			self.vel -= self.vel.normalize_or_zero() * FRICTION_DECCEL
+			self.vel -= self.vel.normalize_or_zero() * FRICTION_DECCEL;
 		} else {
-			println!("{:?}", self.vel);
-			self.vel = Vec3::ZERO
+			self.vel = Vec3::ZERO;
 		};
 	}
 }
