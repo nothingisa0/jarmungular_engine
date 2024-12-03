@@ -21,6 +21,8 @@ pub struct ControlQueues {
 
 	held_keys: HashSet<Key>, //A set (no duplicate elements) of all the keys being held down
 	held_mouse_buttons: HashSet<MouseButton>, //A set (no duplicate elements) of all the mouse buttons being held down
+
+	knobs: Vec<debug::Knob>, //Holds all midi knob positions. Not really a queue, but this is the best place to put it.
 }
 
 impl ControlQueues {
@@ -32,6 +34,8 @@ impl ControlQueues {
 
 			held_keys: HashSet::new(),
 			held_mouse_buttons: HashSet::new(),
+
+			knobs: vec![debug::Knob::init(); 8],
 		}
 	}
 
@@ -64,7 +68,7 @@ impl ControlQueues {
 	}
 
 	//Key press
-	fn keyboard_queue_execute(&mut self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &Scene, event_loop: &ActiveEventLoop) {
+	fn keyboard_queue_execute(&mut self, vulkan_app: &pipeline::VulkanApp, window: &Window, scene: &mut Scene, event_loop: &ActiveEventLoop) {
 		//Loop through keyboard events
 		for event in &self.key_queue {
 			if let WindowEvent::KeyboardInput{device_id, event, is_synthetic} = event {
@@ -87,8 +91,40 @@ impl ControlQueues {
 						event_loop.exit();
 					},
 
+					//Debug with midi knobs
 					(Key::Character("m"), ElementState::Pressed) => {
-						debug::midi_debug_controls(&self.held_keys);
+						//Setup value names being changed
+						let to_adjust_names = [
+								"move_accel",
+								"kickoff_boost_factor",
+
+								"max_move_velocity",
+
+								"friction_deccel",
+						];
+						//Setup values to change
+						let mut to_adjust_vec = vec![
+							&mut scene.player.move_constants.move_accel,
+							&mut scene.player.move_constants.kickoff_boost_factor,
+
+							&mut scene.player.move_constants.max_move_velocity,
+
+							&mut scene.player.move_constants.friction_deccel,
+
+						];
+						//Bounds for all the adjustable values
+						let bounds_vec = vec![
+							(0.1, 2.0), 
+							(1.0, 2.5), 
+
+							(0.5, 4.0), 
+
+							(0.005, 0.1), 
+
+						];
+
+						let knob_id = debug::midi_debug_controls(&self.held_keys, &mut self.knobs, &mut to_adjust_vec, bounds_vec);
+						println!("{:?} value adjusted to {:?}", to_adjust_names[knob_id], to_adjust_vec[knob_id]);
 					}
 
 					_ => (),
@@ -186,9 +222,9 @@ impl ControlQueues {
 			dir += vec3(right.x, 0.0, right.z);
 		};
 
-		//If the direction is nonzero, movement time
+		//If the direction is nonzero, move the dude
+		//Direction will be normalized when passed into the "move_grounded" fn
 		if dir.length_squared() > 0.0 {
-			//Direction will be normalized when passed into the "move_grounded" fn
 			scene.player.move_grounded(dir);
 		}
 	}

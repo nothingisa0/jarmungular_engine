@@ -61,14 +61,14 @@ impl Camera {
 			self.dir.x = PI / 2.0;
 		}
 
-		//Clamp yaw, keeping remainder  - keep between 0 to 360 (full circle)
+		//Clamp yaw, keeping remainder - keep between 0 to 360 (full circle)
 		if self.dir.y < 0.0 {
 			self.dir.y += 2.0 * PI;
 		} else if self.dir.y > 2.0 * PI {
 			self.dir.y -= 2.0 * PI;
 		}
 
-		//Clamp roll  - keep it between -90 and 90 so neck won't break
+		//Clamp roll - keep it between -90 and 90 so neck won't break
 		if self.dir.z < -PI / 2.0 {
 			self.dir.z = -PI / 2.0;
 		} else if self.dir.z >= PI / 2.0 {
@@ -141,9 +141,24 @@ impl Camera {
 		let roll = self.dir.z;
 
 		//This will get screwed up if I ever add nonzero roll
-		let y = pitch.sin();
-		let z = yaw.cos() * pitch.cos();
-		let x = -yaw.sin() * pitch.cos();
+		let mut y = pitch.sin();
+		let mut z = yaw.cos() * pitch.cos();
+		let mut x = -yaw.sin() * pitch.cos();
+
+		//Gotta account for fun floating point moments
+		if x.abs() < 0.0001 {
+			x = 0.0
+		}
+		if y.abs() < 0.0001 {
+			y = 0.0
+		}
+		if z.abs() < 0.0001 {
+			z = 0.0
+		}
+
+		//Cheat a little bit to account for yaw direction when looking straight up
+		z += yaw.cos() * 0.001;
+		x -= yaw.sin() * 0.001;
 
 		vec3(x, y, z).normalize_or(vec3(1.0, 0.0, 0.0))
 	}
